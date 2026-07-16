@@ -1,0 +1,21 @@
+[project]
+name = "songo-ai"
+version = "0.1.0"
+description = "SongoFish: moteur de regles, professeur Alpha-Beta, dataset et reseau multi-tetes pour le Songo."
+requires-python = ">=3.12"
+dependencies = []
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0"]
+perf = ["numba>=0.60"]
+train = ["torch>=2.3"]
+
+[tool.pytest.ini_options]
+testpaths = ["songo_ai/tests"]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["songo_ai*"]
