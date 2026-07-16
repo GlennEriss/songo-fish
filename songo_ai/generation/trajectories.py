@@ -10,7 +10,8 @@ from dataclasses import dataclass
 from typing import List
 
 from .agents import Agent
-from songo_ai.songo.rules import SongoLegacyGame, State
+from songo_ai.songo.fast_rules import FastSongoGame
+from songo_ai.songo.rules import State
 
 
 @dataclass(frozen=True)
@@ -21,14 +22,19 @@ class TrajectoryPosition:
     total_moves: int  # rempli apres la fin de la partie (longueur totale)
 
 
-def generate_trajectory(agent: Agent, rng: random.Random, max_moves: int = 400) -> List[TrajectoryPosition]:
+def generate_trajectory(agent: Agent, rng: random.Random, max_moves: int = 400, game_factory=FastSongoGame.initial) -> List[TrajectoryPosition]:
     """Joue une partie complete et renvoie chaque position AVANT chaque coup
     (jamais la position terminale : section 6.6, "aucune position
     terminale"). `total_moves` permet de classer la phase de partie
-    (section 6.3) sans dependre d'une estimation a priori."""
+    (section 6.3) sans dependre d'une estimation a priori.
+
+    `game_factory` cree le moteur de jeu : FastSongoGame (Numba) par
+    defaut pour la production (section 12.1 : implementation interchangeable
+    validee par test differentiel), SongoLegacyGame reste utilisable pour
+    deboguer/comparer."""
 
     trajectory_id = uuid.uuid4().hex[:12]
-    game = SongoLegacyGame()
+    game = game_factory()
     raw_positions: List[State] = []
 
     moves_played = 0
@@ -51,7 +57,9 @@ def generate_trajectory(agent: Agent, rng: random.Random, max_moves: int = 400) 
     ]
 
 
-def generate_trajectories(agent_factory, num_trajectories: int, seed: int = 0, max_moves: int = 400) -> List[TrajectoryPosition]:
+def generate_trajectories(
+    agent_factory, num_trajectories: int, seed: int = 0, max_moves: int = 400, game_factory=FastSongoGame.initial
+) -> List[TrajectoryPosition]:
     """`agent_factory(rng) -> Agent` : permet de tirer un agent (donc un
     style/une profondeur) different par partie, tout en restant
     deterministe pour une seed donnee."""
@@ -59,5 +67,5 @@ def generate_trajectories(agent_factory, num_trajectories: int, seed: int = 0, m
     positions: List[TrajectoryPosition] = []
     for _ in range(num_trajectories):
         agent = agent_factory(rng)
-        positions.extend(generate_trajectory(agent, rng, max_moves=max_moves))
+        positions.extend(generate_trajectory(agent, rng, max_moves=max_moves, game_factory=game_factory))
     return positions

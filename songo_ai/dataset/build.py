@@ -18,7 +18,7 @@ from typing import Dict, List, Optional, Tuple
 
 from songo_ai.generation import generate_trajectories, make_mixed_agent, sample_positions
 from songo_ai.generation.sampling import classify_phase
-from songo_ai.songo.rules import SongoLegacyGame
+from songo_ai.songo.fast_rules import FastSongoGame
 from songo_ai.teachers import STANDARD, AnnotationCache, DeepTeacher, TeacherConfig
 
 from .schema import DATASET_VERSION, RULES_VERSION, Observation, annotation_to_observation
@@ -51,7 +51,7 @@ def _annotate_payload(payload: Tuple[Tuple[int, ...], int, str, int, TeacherConf
     de toutes les autres (section 4.3 : "distribuer les positions
     independantes entre plusieurs processus CPU")."""
     board, turn, trajectory_id, move_number, teacher_config, cache_root = payload
-    game = SongoLegacyGame.from_board(board, turn)
+    game = FastSongoGame.from_board(board, turn)
     teacher = DeepTeacher(teacher_config)
     cache = AnnotationCache(Path(cache_root))
     annotation = cache.get_or_annotate(teacher, game)
