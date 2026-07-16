@@ -98,3 +98,55 @@ def train_overfit(
         torch.save(model.state_dict(), checkpoint_path)
 
     return history
+
+
+def train_model(
+    train_shard: Path,
+    val_shard: Path,
+    epochs: int = 60,
+    batch_size: int = 256,
+    lr: float = 1e-3,
+    weight_decay: float = 1e-4,
+    dropout: float = 0.1,
+    device: str = "cpu",
+    checkpoint_path: Optional[Path] = None,
+    early_stopping_patience: Optional[int] = 10,
+) -> List[EpochMetrics]:
+    """Entrainement "reel" (etape 7, curriculum 100k : "verifier la
+    generalisation") : dropout + weight decay plus fermes que
+    `train_overfit`, et le checkpoint sauvegarde est celui de la MEILLEURE
+    epoque sur le val (pas la derniere), avec arret anticipe si le val ne
+    s'ameliore plus pendant `early_stopping_patience` epoques consecutives."""
+
+    train_dataset = ObservationDataset(train_shard)
+    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
+    val_loader = DataLoader(ObservationDataset(val_shard), batch_size=batch_size, shuffle=False)
+
+    model = SongoNet(dropout=dropout).to(device)
+    optimizer = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=weight_decay)
+    weights = LossWeights()
+
+    history: List[EpochMetrics] = []
+    best_val_loss = float("inf")
+    best_state = None
+    epochs_without_improvement = 0
+
+    for epoch in range(1, epochs + 1):
+        train_loss, train_top1 = _run_epoch(model, train_loader, optimizer, weights, device)
+        val_loss, val_top1 = _run_epoch(model, val_loader, None, weights, device)
+        history.append(EpochMetrics(epoch, train_loss, train_top1, val_loss, val_top1))
+
+        if val_loss < best_val_loss:
+            best_val_loss = val_loss
+            best_state = {k: v.clone() for k, v in model.state_dict().items()}
+            epochs_without_improvement = 0
+        else:
+            epochs_without_improvement += 1
+            if early_stopping_patience is not None and epochs_without_improvement >= early_stopping_patience:
+                break
+
+    if best_state is not None and checkpoint_path is not None:
+        Path(checkpoint_path).parent.mkdir(parents=True, exist_ok=True)
+        torch.save(best_state, checkpoint_path)
+
+    return history

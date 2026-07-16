@@ -21,6 +21,7 @@ from songo_ai.model import (  # noqa: E402
     compute_loss,
     masked_q_loss,
     soft_cross_entropy,
+    train_model,
     train_overfit,
 )
 from songo_ai.songo.rules import SongoLegacyGame  # noqa: E402
@@ -95,3 +96,23 @@ def test_train_overfit_reduces_loss_on_tiny_synthetic_set(tmp_path: Path) -> Non
     history = train_overfit(shard, val_shard=None, epochs=60, batch_size=8, lr=5e-3)
     assert history[-1].train_loss < history[0].train_loss
     assert history[-1].train_policy_top1 > history[0].train_policy_top1
+
+
+def test_train_model_tracks_val_and_saves_best_checkpoint(tmp_path: Path) -> None:
+    train_shard = tmp_path / "train.jsonl"
+    val_shard = tmp_path / "val.jsonl"
+    _write_tiny_shard(train_shard, n=24, seed=1)
+    _write_tiny_shard(val_shard, n=8, seed=2)
+    checkpoint_path = tmp_path / "model.pt"
+
+    history = train_model(
+        train_shard, val_shard, epochs=15, batch_size=8, dropout=0.1,
+        checkpoint_path=checkpoint_path, early_stopping_patience=5,
+    )
+
+    assert len(history) >= 1
+    assert all(m.val_loss is not None for m in history)
+    assert checkpoint_path.exists()
+
+    model = SongoNet(dropout=0.1)
+    model.load_state_dict(torch.load(checkpoint_path))

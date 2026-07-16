@@ -4,7 +4,8 @@ from .dataset import ObservationDataset
 from .features import FEATURE_SIZE, observation_features
 from .losses import LossBreakdown, LossWeights, compute_loss, masked_q_loss, soft_cross_entropy
 from .network import SongoNet
-from .train import EpochMetrics, train_overfit
+from .inference import load_model, make_network_agent
+from .train import EpochMetrics, train_model, train_overfit
 
 __all__ = [
     "ObservationDataset",
@@ -17,5 +18,8 @@ __all__ = [
     "soft_cross_entropy",
     "SongoNet",
     "EpochMetrics",
+    "train_model",
     "train_overfit",
+    "load_model",
+    "make_network_agent",
 ]

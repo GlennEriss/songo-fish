@@ -1,6 +1,7 @@
 """Schema, shards, validation, manifestes (etape 5 du plan directeur)."""
 
 from .build import DEFAULT_TEACHER_CONFIG, build_dataset
+from .merge import merge_releases
 from .schema import (
     DATASET_VERSION,
     RULES_VERSION,
@@ -16,6 +17,7 @@ from .validate import DistributionReport, build_distribution_report, validate_ob
 __all__ = [
     "DEFAULT_TEACHER_CONFIG",
     "build_dataset",
+    "merge_releases",
     "DATASET_VERSION",
     "RULES_VERSION",
     "Consequences",
