@@ -1,12 +1,23 @@
 """Cache d'annotations (section 6.3 : "utiliser un cache d'annotations afin
 de ne jamais payer deux fois la meme recherche"). Cle = hash Zobrist de la
 position + empreinte de la config du professeur (deux configs differentes
-ne doivent pas partager un resultat)."""
+ne doivent pas partager un resultat).
+
+Backend SQLite (WAL) plutot qu'un fichier JSON par position : le run GCP
+100k a montre qu'un dossier plat a 100 000 entrees, ecrit en concurrence par
+32 processus et re-liste en entier toutes les 5 minutes par le script de
+synchronisation GCS, degrade fortement l'efficacite parallele (~45% mesure
+au lieu de ~90%+ attendu). SQLite en mode WAL autorise des lectures
+concurrentes sans bloquer l'ecrivain, et la synchronisation GCS ne porte
+plus que sur un seul fichier (via l'API de sauvegarde a chaud) au lieu de
+parcourir des dizaines de milliers de petits fichiers.
+"""
 
 from __future__ import annotations
 
 import hashlib
 import json
+import sqlite3
 from dataclasses import asdict
 from pathlib import Path
 from typing import Optional
@@ -20,23 +31,31 @@ def cache_key(zobrist_hash: int, config: TeacherConfig) -> str:
 
 
 class AnnotationCache:
-    """Cache local sur disque (un fichier JSON par entree). Suffisant pour
-    le developpement local et les paliers 10k/100k positions (section 11.3 :
-    "local d'abord"). Un backend partage (SQLite, Cloud Storage) pourra
-    remplacer ce stockage sans changer l'API get/put."""
+    """Cache SQLite (une base par repertoire `root`, fichier `cache.db`).
+    Suffisant pour le developpement local et les paliers 10k/100k/1M
+    (section 11.3 : "local d'abord"). Un backend distant (Cloud SQL,
+    Firestore) pourra remplacer ce stockage sans changer l'API get/put."""
 
     def __init__(self, root: Path) -> None:
         self.root = Path(root)
         self.root.mkdir(parents=True, exist_ok=True)
-
-    def _path(self, key: str) -> Path:
-        return self.root / f"{key}.json"
+        self.db_path = self.root / "cache.db"
+        # timeout genereux : plusieurs processus peuvent se disputer
+        # l'ecrivain unique de SQLite sous forte concurrence (32 workers).
+        self._conn = sqlite3.connect(str(self.db_path), timeout=60.0)
+        self._conn.execute("PRAGMA journal_mode=WAL")
+        self._conn.execute("PRAGMA synchronous=NORMAL")
+        self._conn.execute(
+            "CREATE TABLE IF NOT EXISTS annotations (key TEXT PRIMARY KEY, data TEXT NOT NULL)"
+        )
+        self._conn.commit()
 
     def get(self, zobrist_hash: int, config: TeacherConfig) -> Optional[Annotation]:
-        path = self._path(cache_key(zobrist_hash, config))
-        if not path.exists():
+        key = cache_key(zobrist_hash, config)
+        row = self._conn.execute("SELECT data FROM annotations WHERE key = ?", (key,)).fetchone()
+        if row is None:
             return None
-        data = json.loads(path.read_text())
+        data = json.loads(row[0])
         data["state_board"] = tuple(data["state_board"])
         data["legal_mask"] = tuple(data["legal_mask"])
         data["principal_variation"] = list(data["principal_variation"])
@@ -45,8 +64,12 @@ class AnnotationCache:
         return Annotation(**data)
 
     def put(self, zobrist_hash: int, config: TeacherConfig, annotation: Annotation) -> None:
-        path = self._path(cache_key(zobrist_hash, config))
-        path.write_text(json.dumps(asdict(annotation)))
+        key = cache_key(zobrist_hash, config)
+        payload = json.dumps(asdict(annotation))
+        self._conn.execute(
+            "INSERT OR REPLACE INTO annotations (key, data) VALUES (?, ?)", (key, payload)
+        )
+        self._conn.commit()
 
     def get_or_annotate(self, teacher, game) -> Annotation:
         zhash = game.zobrist_hash()
@@ -56,3 +79,19 @@ class AnnotationCache:
         annotation = teacher.annotate(game)
         self.put(zhash, teacher.config, annotation)
         return annotation
+
+    def __len__(self) -> int:
+        return self._conn.execute("SELECT COUNT(*) FROM annotations").fetchone()[0]
+
+    def snapshot_to(self, path: Path) -> None:
+        """Copie coherente a chaud (API de sauvegarde SQLite) : utilisable
+        pendant que d'autres processus ecrivent encore dans la base, sans
+        risquer un fichier corrompu ou a moitie ecrit (section 11.3 :
+        synchronisation continue vers GCS pendant le calcul)."""
+        dest = sqlite3.connect(str(path))
+        with dest:
+            self._conn.backup(dest)
+        dest.close()
+
+    def close(self) -> None:
+        self._conn.close()
