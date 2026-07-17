@@ -3,7 +3,7 @@ ordonnancement et PV fonctionnels)."""
 
 from __future__ import annotations
 
-from songo_ai.search.negamax import SearchLimits, iterative_deepening
+from songo_ai.search.negamax import EXACT, SearchLimits, TTEntry, _expand_children, iterative_deepening
 from songo_ai.songo.rules import PLAYER_ONE, SongoLegacyGame, local_action_to_pit
 
 
@@ -60,3 +60,47 @@ def test_principal_variation_is_legal_move_sequence() -> None:
         assert not replay.finished
         assert local_action in replay.legal_local_actions()
         replay.play_local(local_action)
+
+
+# ---- evaluate_fn/priority_fn (section 8.1 : brancher songo_ai.hybrid sans
+# dupliquer la recherche) ----------------------------------------------
+
+
+def test_custom_evaluate_fn_is_used_instead_of_default() -> None:
+    game = SongoLegacyGame()
+    target_local_action = 3
+
+    expected_child = game.clone_for_search()
+    expected_child.play_local(target_local_action)
+    expected_board = tuple(expected_child.board)
+
+    def evaluate_fn(g, perspective):
+        # negamax negocie (negation) le score de l'enfant avant de le
+        # comparer au parent : on renvoie donc une valeur tres NEGATIVE
+        # pour que, une fois negatee par l'appelant, l'action ciblee
+        # ressorte comme la meilleure du point de vue de la racine.
+        return -99999.0 if tuple(g.board) == expected_board else 0.0
+
+    result = iterative_deepening(
+        game, SearchLimits(max_depth=1, max_nodes=50_000, max_time_s=2.0), evaluate_fn=evaluate_fn
+    )
+    assert result.local_action == target_local_action
+
+
+def test_priority_fn_orders_children_by_given_score() -> None:
+    game = SongoLegacyGame()
+    legal = game.legal_local_actions()
+    priorities = {a: float(a) for a in legal}
+    ordered = _expand_children(game, legal, tt_entry=None, priority_fn=lambda g, actions: priorities)
+    ordered_actions = [a for a, _ in ordered]
+    assert ordered_actions == sorted(legal, key=lambda a: priorities[a], reverse=True)
+
+
+def test_tt_move_still_takes_priority_over_priority_fn() -> None:
+    game = SongoLegacyGame()
+    legal = game.legal_local_actions()
+    priorities = {a: 0.0 for a in legal}
+    priorities[2] = 100.0
+    tt_entry = TTEntry(depth=1, score=0.0, flag=EXACT, best_local_action=5)
+    ordered = _expand_children(game, legal, tt_entry, priority_fn=lambda g, actions: priorities)
+    assert ordered[0][0] == 5

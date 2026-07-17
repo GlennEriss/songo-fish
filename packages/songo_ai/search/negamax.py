@@ -13,9 +13,12 @@ from __future__ import annotations
 import math
 import time
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Tuple
+from typing import Callable, Dict, List, Optional, Tuple
 
 from songo_ai.songo.rules import SongoLegacyGame, opponent
+
+EvaluateFn = Callable[[SongoLegacyGame, int], float]
+PriorityFn = Callable[[SongoLegacyGame, List[int]], Dict[int, float]]
 
 EXACT = "EXACT"
 LOWER = "LOWER"
@@ -66,23 +69,35 @@ def default_evaluate(game: SongoLegacyGame, perspective: int) -> float:
 
 
 def _expand_children(
-    game: SongoLegacyGame, legal_actions: List[int], tt_entry: Optional[TTEntry]
+    game: SongoLegacyGame,
+    legal_actions: List[int],
+    tt_entry: Optional[TTEntry],
+    priority_fn: Optional[PriorityFn] = None,
 ) -> List[Tuple[int, SongoLegacyGame]]:
-    """Genere chaque enfant une seule fois et l'ordonne (TT move, puis capture
-    immediate decroissante) : evite de rejouer deux fois le meme coup
-    (une fois pour trier, une fois pour la recherche)."""
+    """Genere chaque enfant une seule fois et l'ordonne : evite de rejouer
+    deux fois le meme coup (une fois pour trier, une fois pour la
+    recherche). Ordre par defaut : TT move, puis capture immediate
+    decroissante. Si `priority_fn` est fourni (section 8.1 : tete policy
+    du reseau), il remplace le tri par capture -- reste TT-move-first dans
+    tous les cas (la TT est toujours la meilleure information disponible,
+    reseau ou pas)."""
     tt_move = tt_entry.best_local_action if tt_entry is not None else None
-    own_total_before = sum(game.score())
 
-    pairs: List[Tuple[int, SongoLegacyGame, int]] = []
+    children: Dict[int, SongoLegacyGame] = {}
     for local_action in legal_actions:
         child = game.clone_for_search()
         child.play_local(local_action)
-        capture_gain = sum(child.score()) - own_total_before
-        pairs.append((local_action, child, capture_gain))
+        children[local_action] = child
 
-    pairs.sort(key=lambda item: item[2], reverse=True)
-    ordered = [(local_action, child) for local_action, child, _ in pairs]
+    if priority_fn is not None:
+        priorities = priority_fn(game, legal_actions)
+        ordered_actions = sorted(legal_actions, key=lambda a: priorities.get(a, 0.0), reverse=True)
+    else:
+        own_total_before = sum(game.score())
+        capture_gains = {a: sum(children[a].score()) - own_total_before for a in legal_actions}
+        ordered_actions = sorted(legal_actions, key=lambda a: capture_gains[a], reverse=True)
+
+    ordered = [(a, children[a]) for a in ordered_actions]
     if tt_move is not None:
         for i, (local_action, _) in enumerate(ordered):
             if local_action == tt_move and i != 0:
@@ -101,6 +116,8 @@ def negamax_search(
     node_counter: List[int],
     node_limit: int,
     deadline: float,
+    evaluate_fn: EvaluateFn = default_evaluate,
+    priority_fn: Optional[PriorityFn] = None,
 ) -> Tuple[float, List[int]]:
     node_counter[0] += 1
     if node_counter[0] > node_limit or time.perf_counter() > deadline:
@@ -122,21 +139,31 @@ def negamax_search(
             return tt_entry.score, pv
 
     if game.finished or depth == 0:
-        return default_evaluate(game, perspective), []
+        return evaluate_fn(game, perspective), []
 
     legal_actions = game.legal_local_actions()
     if not legal_actions:
         game.normalize_terminal()
-        return default_evaluate(game, perspective), []
+        return evaluate_fn(game, perspective), []
 
-    ordered_children = _expand_children(game, legal_actions, tt_entry)
+    ordered_children = _expand_children(game, legal_actions, tt_entry, priority_fn)
     best_score = -math.inf
     best_local: Optional[int] = None
     best_pv: List[int] = []
 
     for local_action, child in ordered_children:
         score, child_pv = negamax_search(
-            child, depth - 1, -beta, -alpha, opponent(perspective), tt, node_counter, node_limit, deadline
+            child,
+            depth - 1,
+            -beta,
+            -alpha,
+            opponent(perspective),
+            tt,
+            node_counter,
+            node_limit,
+            deadline,
+            evaluate_fn,
+            priority_fn,
         )
         score = -score
         if score > best_score:
@@ -156,9 +183,16 @@ def negamax_search(
     return best_score, best_pv
 
 
-def iterative_deepening(game: SongoLegacyGame, limits: SearchLimits) -> SearchResult:
+def iterative_deepening(
+    game: SongoLegacyGame,
+    limits: SearchLimits,
+    evaluate_fn: EvaluateFn = default_evaluate,
+    priority_fn: Optional[PriorityFn] = None,
+) -> SearchResult:
     """Approfondissement iteratif : renvoie toujours la derniere profondeur
     completement terminee (fallback de securite, cf. section 8.2/Annexe B).
+    `evaluate_fn`/`priority_fn` permettent de brancher le reseau entraine
+    (section 8.1, cf. songo_ai.hybrid) sans dupliquer cette fonction.
     """
     legal_actions = game.legal_local_actions()
     if not legal_actions:
@@ -176,7 +210,19 @@ def iterative_deepening(game: SongoLegacyGame, limits: SearchLimits) -> SearchRe
 
     for depth in range(1, limits.max_depth + 1):
         try:
-            score, pv = negamax_search(game, depth, -math.inf, math.inf, perspective, tt, node_counter, limits.max_nodes, deadline)
+            score, pv = negamax_search(
+                game,
+                depth,
+                -math.inf,
+                math.inf,
+                perspective,
+                tt,
+                node_counter,
+                limits.max_nodes,
+                deadline,
+                evaluate_fn,
+                priority_fn,
+            )
         except SearchAborted:
             best_completed.timed_out = True
             break
