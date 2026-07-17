@@ -67,7 +67,7 @@ fi
 (
   while true; do
     sleep "$SYNC_INTERVAL_SECONDS"
-    .venv/bin/python scripts/sync_cache.py "$CACHE_DIR" /tmp/cache_snapshot.db 2>>"$LOG_FILE" \
+    .venv/bin/python apps/trainer/scripts/sync_cache.py "$CACHE_DIR" /tmp/cache_snapshot.db 2>>"$LOG_FILE" \
       && gcloud storage cp /tmp/cache_snapshot.db "$CACHE_SNAPSHOT_GCS" 2>>"$LOG_FILE" \
       && echo "$(date -u) : sync cache -> GCS"
   done
@@ -75,14 +75,14 @@ fi
 SYNC_PID=$!
 
 echo "=== Lancement du build ($NUM_POSITIONS positions) $(date -u) ==="
-timeout "$HARD_TIMEOUT_SECONDS" .venv/bin/python scripts/build_100k_gcp.py "$NUM_POSITIONS"
+timeout "$HARD_TIMEOUT_SECONDS" .venv/bin/python apps/trainer/scripts/build_100k_gcp.py "$NUM_POSITIONS"
 STATUS=$?
 echo "=== Fin du build, code=$STATUS $(date -u) ==="
 
 kill "$SYNC_PID" 2>/dev/null || true
 
 echo "=== Sync final du cache (que le job ait reussi, echoue, ou timeout) $(date -u) ==="
-.venv/bin/python scripts/sync_cache.py "$CACHE_DIR" /tmp/cache_snapshot.db
+.venv/bin/python apps/trainer/scripts/sync_cache.py "$CACHE_DIR" /tmp/cache_snapshot.db
 gcloud storage cp /tmp/cache_snapshot.db "$CACHE_SNAPSHOT_GCS"
 
 if [ -f "$OUT_DIR/manifest.json" ]; then

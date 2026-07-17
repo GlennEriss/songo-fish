@@ -11,11 +11,12 @@ perf = ["numba>=0.60"]
 train = ["torch>=2.3"]
 
 [tool.pytest.ini_options]
-testpaths = ["songo_ai/tests"]
+testpaths = ["packages/songo_ai/tests"]
 
 [build-system]
 requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
+where = ["packages"]
 include = ["songo_ai*"]
