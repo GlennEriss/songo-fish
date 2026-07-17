@@ -31,3 +31,20 @@ def test_shallow_search_beats_random_agent() -> None:
     result = play_match(strong, random_agent, num_games=20, seed=1)
     # Un minimax meme peu profond doit dominer un agent aleatoire.
     assert result.win_rate_a > 0.7
+
+
+def test_two_deterministic_agents_produce_degenerate_diversity_without_opening_randomization() -> None:
+    # Deux agents deterministes (minimax sans aleatoire) ne rejouent que 2
+    # parties distinctes (une par cote de depart), peu importe num_games :
+    # c'est precisement le piege documente en tete de module.
+    agent_x = make_shallow_search_agent(max_depth=2, max_nodes=5_000, max_time_s=0.5)
+    agent_y = make_shallow_search_agent(max_depth=1, max_nodes=5_000, max_time_s=0.5)
+    result = play_match(agent_x, agent_y, num_games=10, seed=7, opening_random_plies=0)
+    assert result.distinct_games == 2
+
+
+def test_opening_random_plies_restores_game_diversity() -> None:
+    agent_x = make_shallow_search_agent(max_depth=2, max_nodes=5_000, max_time_s=0.5)
+    agent_y = make_shallow_search_agent(max_depth=1, max_nodes=5_000, max_time_s=0.5)
+    result = play_match(agent_x, agent_y, num_games=10, seed=7, opening_random_plies=4)
+    assert result.distinct_games > 2

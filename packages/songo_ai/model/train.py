@@ -108,6 +108,8 @@ def train_model(
     lr: float = 1e-3,
     weight_decay: float = 1e-4,
     dropout: float = 0.1,
+    width: int = 128,
+    num_blocks: int = 3,
     device: str = "cpu",
     checkpoint_path: Optional[Path] = None,
     early_stopping_patience: Optional[int] = 10,
@@ -122,7 +124,7 @@ def train_model(
     train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
     val_loader = DataLoader(ObservationDataset(val_shard), batch_size=batch_size, shuffle=False)
 
-    model = SongoNet(dropout=dropout).to(device)
+    model = SongoNet(width=width, num_blocks=num_blocks, dropout=dropout).to(device)
     optimizer = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=weight_decay)
     weights = LossWeights()
 

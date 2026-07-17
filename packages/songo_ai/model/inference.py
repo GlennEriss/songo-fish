@@ -18,17 +18,23 @@ from .features import observation_features
 from .network import SongoNet
 
 
-def load_model(checkpoint_path: Path, dropout: float = 0.0) -> SongoNet:
-    model = SongoNet(dropout=dropout)
+def load_model(checkpoint_path: Path, dropout: float = 0.0, width: int = 128, num_blocks: int = 3) -> SongoNet:
+    """`width`/`num_blocks` doivent correspondre a l'architecture enregistree
+    dans le manifeste de la version chargee (voir `songo_ai.model.registry`) :
+    ils ne sont pas stockes dans le checkpoint lui-meme, seulement les poids."""
+    model = SongoNet(width=width, num_blocks=num_blocks, dropout=dropout)
     model.load_state_dict(torch.load(checkpoint_path, map_location="cpu"))
     model.eval()
     return model
 
 
-def make_network_agent(model: SongoNet):
-    """Renvoie un Agent (section generation.agents.Agent) qui joue le coup
-    de plus forte probabilite policy, masque aux coups legaux -- aucune
-    recherche, une seule passe avant du reseau par coup."""
+def make_network_agent(model: SongoNet, temperature: float = 0.0):
+    """Renvoie un Agent (section generation.agents.Agent). `temperature=0`
+    (defaut) : argmax pur, deterministe -- pour mesurer "ce que le reseau a
+    appris" (section 3.2). `temperature>0` : echantillonne selon
+    softmax(logits/temperature) via le rng fourni par l'appelant (ex.
+    songo_ai.evaluation.play_match), utile pour obtenir des parties
+    reellement variees en tournoi plutot que la meme partie repetee."""
     model.eval()
 
     def agent(game: SongoLegacyGame, rng: Optional[random.Random] = None) -> int:
@@ -42,6 +48,13 @@ def make_network_agent(model: SongoNet):
         logits = policy_logits.squeeze(0)
         mask_tensor = torch.tensor(legal_mask, dtype=torch.bool)
         masked = logits.masked_fill(~mask_tensor, float("-inf"))
-        return int(torch.argmax(masked).item())
+
+        if temperature <= 0 or rng is None:
+            return int(torch.argmax(masked).item())
+
+        probs = torch.softmax(masked / temperature, dim=-1)
+        legal_indices = [i for i in range(7) if legal_mask[i]]
+        weights = [probs[i].item() for i in legal_indices]
+        return rng.choices(legal_indices, weights=weights, k=1)[0]
 
     return agent

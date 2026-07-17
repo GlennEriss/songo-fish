@@ -12,6 +12,52 @@ Génération de dataset, entraînement du réseau, orchestration GCP. Consomme
 - `train_and_eval_110k.py` — entraînement réel + tournoi contre agents de référence (étape 7)
 - `package_for_gcp.sh` — empaquette le code et le pousse vers Cloud Storage
 - `gcp_startup_script.sh` — script de démarrage de la VM (rehydratation cache, build, upload, arrêt auto)
+- `register_existing_models.py` — enregistrement rétroactif ponctuel des deux premières versions (ne pas relancer)
+- `train_new_version.py` — **modèle pour tout futur entraînement** : from scratch, enregistrement automatique, tournoi vs référence + champion actuel (`--version 0.2.0 --dataset-dir data/dataset_vXXX`)
+
+## Versioning des modèles (`packages/songo_ai/model/registry.py`)
+
+**Chaque version = un entraînement complet from scratch sur un dataset donné, jamais un fine-tuning d'une version précédente.**
+
+Pourquoi : le plan directeur organise déjà l'amélioration du modèle autour d'un
+cycle champion/challenger avec porte de promotion statistique (section 10.2/10.3)
+— un nouveau candidat est entraîné et comparé à l'ancien champion, pas fusionné
+avec lui. Et le réseau est assez petit (quelques centaines de milliers de
+paramètres, quelques minutes d'entraînement même sur 100k+ positions) pour que
+"économiser du calcul en repartant de l'existant" ne soit jamais un argument
+valable ici — ça compte pour de gros modèles, pas pour celui-ci.
+
+Convention de version (semver, indépendante de la version du package `songo-ai`
+dans `pyproject.toml`) :
+
+- **MAJOR** : changement d'architecture (largeur, nombre de blocs, features d'entrée) — versions non comparables directement
+- **MINOR** : nouvel entraînement sur un dataset plus grand/différent, même architecture — le cas normal à chaque palier de volume
+- **PATCH** : même dataset, même architecture, autre run (seed, hyperparamètres) — itération fine
+
+Versions actuelles :
+
+| Version | Dataset | Statut | Notes |
+|---|---|---|---|
+| 0.0.1 | 10k (standard) | archivé | surapprentissage volontaire, validation pipeline (étape 6), pas un joueur |
+| 0.1.0 | 110k (10k standard + 100k profond) | **champion** | premier entraînement réel, généralisation validée, bat aléatoire/minimax profondeur 1 |
+
+Utilisation pour un nouvel entraînement :
+
+```python
+from songo_ai.model import train_and_register
+
+manifest = train_and_register(
+    version="0.2.0",
+    train_shard=Path("data/dataset_vXXX/train.jsonl"),
+    val_shard=Path("data/dataset_vXXX/val.jsonl"),
+    dataset_manifest_path=Path("data/dataset_vXXX/manifest.json"),
+    notes="...",
+)
+# promotion en champion seulement apres revue des metriques / tournoi vs le
+# champion actuel (jamais automatique) :
+from songo_ai.model import promote_version
+promote_version("0.2.0")
+```
 
 ## Lancer un job GCP
 

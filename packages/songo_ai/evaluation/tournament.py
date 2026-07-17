@@ -1,13 +1,23 @@
 """Tournois (section 10.2) : faire jouer deux agents l'un contre l'autre,
 en alternant strictement qui commence, et publier un intervalle de
-confiance plutot qu'un pourcentage isole (section 10.2, dernier point)."""
+confiance plutot qu'un pourcentage isole (section 10.2, dernier point).
+
+Piege observe en pratique : deux agents deterministes (ex. reseau en
+argmax pur + minimax sans aleatoire) rejouent EXACTEMENT la meme partie a
+chaque repetition d'une meme position de depart -- "100 parties" peuvent
+alors n'etre que 2 parties distinctes repetees 50 fois, ce qui rend
+l'intervalle de confiance de Wilson trompeur (il suppose des essais
+independants). `opening_random_plies` force une vraie diversite en jouant
+quelques coups aleatoires avant de rendre la main aux agents, et
+`distinct_games` dans le resultat permet de verifier que l'echantillon
+n'est pas degenere avant de faire confiance a l'intervalle."""
 
 from __future__ import annotations
 
 import math
 import random
 from dataclasses import dataclass
-from typing import Optional
+from typing import Optional, Tuple
 
 from songo_ai.songo.fast_rules import FastSongoGame
 from songo_ai.songo.rules import PLAYER_ONE
@@ -23,6 +33,7 @@ class MatchResult:
     win_rate_a: float
     ci_low: float
     ci_high: float
+    distinct_games: int  # nombre de parties reellement differentes (par sequence de coups)
 
 
 def _wilson_interval(successes: float, n: int, z: float = 1.96) -> tuple:
@@ -38,17 +49,38 @@ def _wilson_interval(successes: float, n: int, z: float = 1.96) -> tuple:
     return max(0.0, center - margin), min(1.0, center + margin)
 
 
-def play_match(agent_a, agent_b, num_games: int, seed: int = 0, max_moves: int = 400) -> MatchResult:
+def play_match(
+    agent_a,
+    agent_b,
+    num_games: int,
+    seed: int = 0,
+    max_moves: int = 400,
+    opening_random_plies: int = 0,
+) -> MatchResult:
     """Alterne strictement le joueur qui commence (section 10.2). Chaque
     partie est jouee jusqu'a la fin ou `max_moves`, sur le moteur rapide
-    (Numba), sans historique."""
+    (Numba), sans historique. `opening_random_plies` > 0 recommande des que
+    l'un des deux agents est deterministe (cf. avertissement en tete de
+    module) : joue ce nombre de coups aleatoires (via `seed`, donc
+    reproductible) avant de rendre la main aux agents."""
     rng = random.Random(seed)
     wins_a = wins_b = draws = 0
+    seen_move_sequences: set = set()
 
     for game_index in range(num_games):
         a_starts = game_index % 2 == 0
         game = FastSongoGame.initial()
         moves_played = 0
+        move_sequence = []
+
+        while not game.finished and moves_played < opening_random_plies:
+            legal = game.legal_local_actions()
+            if not legal:
+                break
+            action = rng.choice(legal)
+            move_sequence.append(action)
+            game.play_local(action)
+            moves_played += 1
 
         while not game.finished and moves_played < max_moves:
             current_is_a = (game.turn == PLAYER_ONE) == a_starts
@@ -60,11 +92,14 @@ def play_match(agent_a, agent_b, num_games: int, seed: int = 0, max_moves: int =
             action = agent(game, rng)
             if action not in legal:
                 action = legal[0]
+            move_sequence.append(action)
             game.play_local(action)
             moves_played += 1
 
         if not game.finished:
             game.normalize_terminal()
+
+        seen_move_sequences.add((a_starts, tuple(move_sequence)))
 
         if not game.finished or game.winner == 0:
             # Partie tronquee par max_moves sans etre reellement terminee
@@ -91,4 +126,5 @@ def play_match(agent_a, agent_b, num_games: int, seed: int = 0, max_moves: int =
         win_rate_a=win_rate_a,
         ci_low=ci_low,
         ci_high=ci_high,
+        distinct_games=len(seen_move_sequences),
     )

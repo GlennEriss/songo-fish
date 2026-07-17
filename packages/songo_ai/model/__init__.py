@@ -5,6 +5,16 @@ from .features import FEATURE_SIZE, observation_features
 from .losses import LossBreakdown, LossWeights, compute_loss, masked_q_loss, soft_cross_entropy
 from .network import SongoNet
 from .inference import load_model, make_network_agent
+from .registry import (
+    ModelManifest,
+    build_manifest,
+    get_champion,
+    list_versions,
+    load_registry,
+    promote_version,
+    register_model,
+    save_registry,
+)
 from .train import EpochMetrics, train_model, train_overfit
 
 __all__ = [
@@ -22,4 +32,12 @@ __all__ = [
     "train_overfit",
     "load_model",
     "make_network_agent",
+    "ModelManifest",
+    "build_manifest",
+    "get_champion",
+    "list_versions",
+    "load_registry",
+    "promote_version",
+    "register_model",
+    "save_registry",
 ]
