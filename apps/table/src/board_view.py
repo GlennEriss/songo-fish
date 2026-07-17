@@ -1,10 +1,20 @@
 """Rendu du plateau (section "premiere version" : formes geometriques,
-piles de pions en points, pas de texture). Le mapping des positions suit le
-sens de la distribution des graines (index croissant 0..13 puis retour a 0,
-cf. songo_ai.songo.rules) pour que le trajet visuel soit circulaire et
-coherent avec les regles : rangee du bas = pits 0-6 (joueur 1, gauche a
-droite), rangee du haut = pits 13..7 (joueur 2, affiches en miroir pour que
-le circuit se poursuive visuellement du bas-droite vers le haut-droite)."""
+piles de pions en points, pas de texture).
+
+Sens de semis -- sens des aiguilles d'une montre, comme au Songo reel.
+Verifie contre l'exemple du livre (Mbarga Owona, p.20) : jouer S3 (5
+graines) distribue vers S2, S1, S0 (index decroissant dans la rangee sud)
+puis N0, N1 (index croissant dans la rangee nord). Nos index internes
+0..13 croissants (cf. songo_ai.songo.rules) suivent exactement cet ordre,
+donc :
+  - rangee du bas (pits 0-6, joueur 1) : affichee de DROITE a GAUCHE
+    (pit 0 = case "1" du joueur, la plus a droite ; pit 6 = case la plus
+    a gauche, adjacente a la rangee du haut).
+  - rangee du haut (pits 7-13, joueur 2) : affichee de GAUCHE a DROITE
+    (pit 7 = case "1" du joueur, la plus a gauche, juste apres le pit 6 ;
+    pit 13 = case la plus a droite).
+Le circuit visuel est donc bien circulaire et dans le sens horaire :
+droite->gauche en bas, gauche->droite en haut."""
 
 from __future__ import annotations
 
@@ -20,13 +30,12 @@ import config as C
 
 def pit_position(index: int) -> Tuple[int, int]:
     if 0 <= index <= 6:
-        x = C.BOARD_LEFT + index * C.PIT_SPACING_X
+        # rangee du bas : pit 0 a droite, pit 6 a gauche (semis droite->gauche)
+        x = C.BOARD_LEFT + (6 - index) * C.PIT_SPACING_X
         return x, C.ROW_Y_BOTTOM
     if 7 <= index <= 13:
-        # 7 est le plus a droite (juste apres le pit 6 dans le sens de la
-        # distribution), 13 le plus a gauche.
-        col_from_right = index - 7
-        x = C.BOARD_LEFT + (6 - col_from_right) * C.PIT_SPACING_X
+        # rangee du haut : pit 7 a gauche, pit 13 a droite (semis gauche->droite)
+        x = C.BOARD_LEFT + (index - 7) * C.PIT_SPACING_X
         return x, C.ROW_Y_TOP
     raise ValueError(f"pas un pit jouable: {index}")
 
