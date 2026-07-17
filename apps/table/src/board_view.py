@@ -106,6 +106,10 @@ class BoardView:
         count_label = self.font_header.render(str(count), True, C.COLOR_TEXT_PRIMARY)
         self.screen.blit(count_label, count_label.get_rect(center=(rect.centerx, rect.centery)))
 
+    def draw_row_label(self, text: str, y: int, color: Tuple[int, int, int]) -> None:
+        label = self.font_label.render(text, True, color)
+        self.screen.blit(label, label.get_rect(center=(C.WINDOW_WIDTH // 2, y)))
+
     def draw_board(
         self,
         board: list,
@@ -127,8 +131,19 @@ class BoardView:
             )
 
         store_receiving = receiving_pit in (P1_STORE, P2_STORE)
-        self.draw_store(P1_STORE, board[P1_STORE], p1_label, receiving=(store_receiving and receiving_pit == P1_STORE))
-        self.draw_store(P2_STORE, board[P2_STORE], p2_label, receiving=(store_receiving and receiving_pit == P2_STORE))
+        # Le magasin est trop etroit pour un nom de controleur complet
+        # (deja vu : ca deborde) -- il garde un label court fixe. Le nom
+        # complet passe par p1_label/p2_label est reserve a l'etiquette de
+        # rangee ci-dessous, qui a toute la largeur de la fenetre.
+        self.draw_store(P1_STORE, board[P1_STORE], "J1", receiving=(store_receiving and receiving_pit == P1_STORE))
+        self.draw_store(P2_STORE, board[P2_STORE], "J2", receiving=(store_receiving and receiving_pit == P2_STORE))
+
+        # Rappel explicite de qui joue quelle rangee, dans l'espace vide
+        # entre les deux rangees (juste sous celle du haut / juste au-dessus
+        # de celle du bas) -- l'ancien affichage ne le montrait qu'en petit
+        # texte dans les magasins, pas assez visible pour suivre une partie.
+        self.draw_row_label(f"^ {p2_label} (rangee du haut)", C.ROW_Y_TOP + 85, C.COLOR_ACCENT_2)
+        self.draw_row_label(f"v {p1_label} (rangee du bas)", C.ROW_Y_BOTTOM - 60, C.COLOR_ACCENT)
 
     def draw_header(self, text: str, sub_text: str = "") -> None:
         header = self.font_header.render(text, True, C.COLOR_TEXT_PRIMARY)

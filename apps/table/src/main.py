@@ -135,7 +135,7 @@ def run() -> None:
         capturing = animation is not None and animation.phase == "capturing"
         animation_done = animation is None or animation.finished
 
-        view.draw_board(display_board, "Joueur 1", "Joueur 2", source_pit, receiving_pit, capturing)
+        view.draw_board(display_board, f"J1: {label1}", f"J2: {label2}", source_pit, receiving_pit, capturing)
         view.draw_header(
             "SongoFish -- table (spectateur)",
             f"J1: {label1}   vs   J2: {label2}   (R = recommencer)",
