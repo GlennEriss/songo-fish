@@ -9,9 +9,10 @@ dependencies = []
 dev = ["pytest>=8.0"]
 perf = ["numba>=0.60"]
 train = ["torch>=2.3"]
+table = ["pygame>=2.5"]
 
 [tool.pytest.ini_options]
-testpaths = ["packages/songo_ai/tests"]
+testpaths = ["packages/songo_ai/tests", "apps/table/src"]
 
 [build-system]
 requires = ["setuptools>=68"]

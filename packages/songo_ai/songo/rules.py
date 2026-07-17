@@ -167,6 +167,12 @@ class SongoLegacyGame:
     winner: Optional[int] = None
     history: List[MoveResult] = field(default_factory=list)
     record_history: bool = True
+    # Trace du dernier coup joue (case par case, dans l'ordre), pour toute
+    # UI qui veut animer la distribution/capture au lieu de sauter
+    # directement a l'etat final (ex: apps/table). Purement additif : ne
+    # change ni la signature ni le comportement de _sow()/_capture().
+    last_sow_trace: List[int] = field(default_factory=list)
+    last_capture_trace: List[int] = field(default_factory=list)
 
     @classmethod
     def from_board(cls, board: Iterable[int], turn: int = PLAYER_ONE) -> "SongoLegacyGame":
@@ -305,6 +311,7 @@ class SongoLegacyGame:
         return self.play(local_action_to_pit(self.turn, local_action))
 
     def _sow(self, move: int) -> int:
+        self.last_sow_trace = []
         seed_count = self.board[move]
         next_index = move + 1
 
@@ -313,6 +320,7 @@ class SongoLegacyGame:
                 next_index = P1_STORE if move == 6 else P2_STORE
             self.board[next_index] += 1
             self.board[move] = 0
+            self.last_sow_trace.append(next_index)
             return next_index
 
         moved = 0
@@ -328,6 +336,7 @@ class SongoLegacyGame:
                     if seed_count - moved == 1:
                         self.board[P1_STORE] += 1
                         next_index = P1_STORE
+                        self.last_sow_trace.append(next_index)
                         break
                     next_index = 7
                 else:
@@ -335,10 +344,12 @@ class SongoLegacyGame:
                     if seed_count - moved == 1:
                         self.board[P2_STORE] += 1
                         next_index = P2_STORE
+                        self.last_sow_trace.append(next_index)
                         break
                     next_index = 0
 
             self.board[next_index] += 1
+            self.last_sow_trace.append(next_index)
             moved += 1
             next_index += 1
 
@@ -346,6 +357,8 @@ class SongoLegacyGame:
         return next_index - 1
 
     def _capture(self, move: int, arrival: int) -> int:
+        self.last_capture_trace = []
+
         if arrival < 0 or arrival >= BOARD_SIZE:
             return 0
 
@@ -376,6 +389,7 @@ class SongoLegacyGame:
             else:
                 self.board[P1_STORE] += seeds
             self.board[current] = 0
+            self.last_capture_trace.append(current)
             current -= 1
 
         return captured

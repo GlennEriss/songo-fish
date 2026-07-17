@@ -124,6 +124,8 @@ def test_single_seed_from_edge_pit_goes_to_own_store_without_capture() -> None:
     assert game.board[P1_STORE] == 1
     assert game.board[6] == 0
     assert game.turn == PLAYER_TWO
+    assert game.last_sow_trace == [P1_STORE]
+    assert game.last_capture_trace == []
 
 
 def test_capture_cascade_backward_stops_at_boundary() -> None:
@@ -139,6 +141,8 @@ def test_capture_cascade_backward_stops_at_boundary() -> None:
     assert game.board[6] == 1
     assert game.board[P1_STORE] == 4
     assert game.board[13] == 10  # hors de portee de la cascade
+    assert game.last_sow_trace == [5, 6, 7, 8]  # une graine deposee a chaque case, dans l'ordre
+    assert game.last_capture_trace == [8, 7]  # capture en arriere, de l'arrivee vers la frontiere
 
 
 def test_no_capture_when_arrival_is_first_opponent_pit() -> None:
