@@ -7,7 +7,7 @@ aucune regle dupliquee). Chaque coup s'anime case par case au lieu de
 sauter directement au resultat final.
 
 Exemples (depuis la racine du repo) :
-    .venv/bin/python apps/table/src/main.py --player1 model:champion --player2 minimax:4
+    .venv/bin/python apps/table/src/main.py --player1 songofish:champion:8 --player2 minimax:4
     .venv/bin/python apps/table/src/main.py --player1 minimax:1 --player2 minimax:6 --delay 0.3
 """
 

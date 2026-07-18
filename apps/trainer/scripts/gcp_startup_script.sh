@@ -26,6 +26,7 @@ set -uo pipefail
 BUCKET="gs://songo-model-ai-vertex-bucket-001"
 LOG_FILE="/tmp/run.log"
 NUM_POSITIONS=$(curl -s -H "Metadata-Flavor: Google" "http://metadata.google.internal/computeMetadata/v1/instance/attributes/num-positions" || echo "100000")
+SEED=$(curl -s -H "Metadata-Flavor: Google" "http://metadata.google.internal/computeMetadata/v1/instance/attributes/seed" || echo "456")
 OUT_DIR="/tmp/dataset_v002_${NUM_POSITIONS}"
 CACHE_DIR="${OUT_DIR}/annotation_cache"
 CACHE_DB="${CACHE_DIR}/cache.db"
@@ -75,7 +76,7 @@ fi
 SYNC_PID=$!
 
 echo "=== Lancement du build ($NUM_POSITIONS positions) $(date -u) ==="
-timeout "$HARD_TIMEOUT_SECONDS" .venv/bin/python apps/trainer/scripts/build_100k_gcp.py "$NUM_POSITIONS"
+timeout "$HARD_TIMEOUT_SECONDS" .venv/bin/python apps/trainer/scripts/build_100k_gcp.py "$NUM_POSITIONS" "$SEED"
 STATUS=$?
 echo "=== Fin du build, code=$STATUS $(date -u) ==="
 

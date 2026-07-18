@@ -28,16 +28,20 @@ DEEP_CONFIG = TeacherConfig(
 
 
 def main() -> None:
-    # Argument optionnel : nombre de positions (defaut 100000). Permet de
-    # reutiliser ce meme script pour un test a blanc rapide (ex: 30) avant
-    # de lancer le vrai palier 100k (section 11.3 : micro-pilote d'abord).
+    # Arguments optionnels : nombre de positions (defaut 100000) puis seed
+    # (defaut 456, celui du palier 100k). Permet de reutiliser ce meme
+    # script pour un test a blanc rapide (ex: 30) avant de lancer le vrai
+    # palier (section 11.3 : micro-pilote d'abord), et de choisir un seed
+    # different de 456 pour un nouveau palier -- meme trajectoires brutes
+    # sinon, donc chevauchement avec le dataset 100k deja genere.
     num_positions = int(sys.argv[1]) if len(sys.argv) > 1 else 100_000
+    seed = int(sys.argv[2]) if len(sys.argv) > 2 else 456
     out_dir = Path(f"/tmp/dataset_v002_{num_positions}")
     start = time.perf_counter()
     manifest = build_dataset(
         num_positions=num_positions,
         out_dir=out_dir,
-        seed=456,
+        seed=seed,
         teacher_config=DEEP_CONFIG,
         trajectory_multiplier=4,
         max_moves=300,
