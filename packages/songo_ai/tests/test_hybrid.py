@@ -52,6 +52,31 @@ def test_songofish_agent_returns_a_legal_move() -> None:
     assert action in game.legal_local_actions()
 
 
+def test_network_cache_shares_forward_pass_between_heads() -> None:
+    # Une meme position demandee via evaluate puis priority ne doit couter
+    # qu'un seul passage avant (cache partage par hash Zobrist).
+    from songo_ai.hybrid.network_eval import NetworkCache
+
+    model = _fresh_model()
+    calls = {"n": 0}
+    original_forward = model.forward
+
+    def counting_forward(*args, **kwargs):
+        calls["n"] += 1
+        return original_forward(*args, **kwargs)
+
+    model.forward = counting_forward  # type: ignore[method-assign]
+    cache = NetworkCache(model)
+    evaluate = make_network_evaluate(model, cache)
+    priority = make_network_priority(model, cache)
+
+    game = SongoLegacyGame()
+    evaluate(game, game.turn)
+    priority(game, game.legal_local_actions())
+    evaluate(game, game.turn)
+    assert calls["n"] == 1
+
+
 def test_songofish_agent_handles_near_terminal_position() -> None:
     # Territoire adverse presque asseche : verifie que le branchement reseau
     # ne casse pas sur les cas limites (famine/normalize_terminal) deja geres

@@ -13,11 +13,17 @@ dupliquer la recherche.
 
 Les deux fonctions retrouvent le meme etat canonique que celui vu a
 l'entrainement (songo_ai.dataset.schema.canonicalize_board) : le reseau n'a
-jamais vu autre chose que "mon" plateau vu du joueur au trait."""
+jamais vu autre chose que "mon" plateau vu du joueur au trait.
+
+Cout : le passage avant PyTorch est le poste dominant de SongoFish
+(~0,7 ms/noeud, surcout d'appel plus que calcul pour un reseau de ~105k
+parametres). Un cache par hash Zobrist (les transpositions ramenent les
+memes positions dans l'arbre) partage entre les deux tetes fait qu'une
+position unique n'est jamais evaluee deux fois."""
 
 from __future__ import annotations
 
-from typing import Dict, List
+from typing import Dict, List, Tuple
 
 import torch
 
@@ -29,6 +35,11 @@ from songo_ai.songo.rules import SongoLegacyGame
 
 EVAL_SCALE = 300.0  # meme ordre de grandeur que default_evaluate (diff*10, cf. _WDL_PLACEHOLDER_K)
 
+# Purge simple du cache au-dela de cette taille (une partie entiere en
+# consomme une fraction ; la purge complete evite une gestion LRU sans
+# rapport avec le gain).
+_CACHE_MAX_ENTRIES = 200_000
+
 
 def _features_for(game: SongoLegacyGame) -> torch.Tensor:
     state = canonicalize_board(tuple(int(v) for v in game.board), game.turn)
@@ -36,8 +47,34 @@ def _features_for(game: SongoLegacyGame) -> torch.Tensor:
     return torch.tensor(observation_features(state, legal_mask), dtype=torch.float32).unsqueeze(0)
 
 
-def make_network_evaluate(model: SongoNet) -> EvaluateFn:
-    model.eval()
+class NetworkCache:
+    """Une passe avant par position unique (cle = hash Zobrist, qui couvre
+    plateau + joueur au trait) : sert a la fois la policy (ordonnancement)
+    et le lean WDL (evaluation de feuille)."""
+
+    def __init__(self, model: SongoNet) -> None:
+        model.eval()
+        self._model = model
+        self._entries: Dict[int, Tuple[List[float], float]] = {}
+
+    def outputs(self, game: SongoLegacyGame) -> Tuple[List[float], float]:
+        key = game.zobrist_hash()
+        hit = self._entries.get(key)
+        if hit is None:
+            with torch.no_grad():
+                policy_logits, wdl_logits, _ = self._model(_features_for(game))
+            policy = torch.softmax(policy_logits, dim=-1).squeeze(0).tolist()
+            wdl = torch.softmax(wdl_logits, dim=-1).squeeze(0)
+            lean = (wdl[0] - wdl[2]).item()
+            if len(self._entries) >= _CACHE_MAX_ENTRIES:
+                self._entries.clear()
+            hit = (policy, lean)
+            self._entries[key] = hit
+        return hit
+
+
+def make_network_evaluate(model: SongoNet, cache: NetworkCache | None = None) -> EvaluateFn:
+    net_cache = cache if cache is not None else NetworkCache(model)
 
     def evaluate(game: SongoLegacyGame, perspective: int) -> float:
         if game.finished:
@@ -46,27 +83,21 @@ def make_network_evaluate(model: SongoNet) -> EvaluateFn:
             # existante pour ce cas, inchangee.
             return default_evaluate(game, perspective)
 
-        with torch.no_grad():
-            _, wdl_logits, _ = model(_features_for(game))
-            probs = torch.softmax(wdl_logits, dim=-1).squeeze(0)
-
         # win/draw/loss, du point de vue du joueur au trait (canonicalize_board) ;
         # en negamax, perspective == game.turn a ce point (convention respectee
         # par negamax_search/iterative_deepening), donc "lean" est deja du point
         # de vue de `perspective`.
-        lean = (probs[0] - probs[2]).item()
+        _, lean = net_cache.outputs(game)
         return lean * EVAL_SCALE
 
     return evaluate
 
 
-def make_network_priority(model: SongoNet) -> PriorityFn:
-    model.eval()
+def make_network_priority(model: SongoNet, cache: NetworkCache | None = None) -> PriorityFn:
+    net_cache = cache if cache is not None else NetworkCache(model)
 
     def priority(game: SongoLegacyGame, legal_actions: List[int]) -> Dict[int, float]:
-        with torch.no_grad():
-            policy_logits, _, _ = model(_features_for(game))
-            probs = torch.softmax(policy_logits, dim=-1).squeeze(0)
-        return {a: probs[a].item() for a in legal_actions}
+        policy, _ = net_cache.outputs(game)
+        return {a: policy[a] for a in legal_actions}
 
     return priority

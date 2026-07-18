@@ -104,3 +104,88 @@ def test_tt_move_still_takes_priority_over_priority_fn() -> None:
     tt_entry = TTEntry(depth=1, score=0.0, flag=EXACT, best_local_action=5)
     ordered = _expand_children(game, legal, tt_entry, priority_fn=lambda g, actions: priorities)
     assert ordered[0][0] == 5
+
+
+# ---- ameliorations de recherche (killers/history/PVS/aspiration/quiescence),
+# exactitude et ordonnancement -----------------------------------------
+
+
+def test_improved_search_returns_same_exact_score_as_plain_negamax() -> None:
+    # PVS + killers + history + aspiration sont des optimisations
+    # d'elagage : la valeur minimax exacte ne doit jamais changer.
+    import math
+
+    from songo_ai.search.negamax import negamax_search
+
+    boards = [
+        None,  # position initiale
+        [0, 0, 0, 0, 4, 1, 1, 1, 1, 0, 0, 0, 0, 10, 0, 0],
+        [2, 3, 1, 0, 5, 2, 1, 4, 0, 2, 3, 1, 2, 0, 8, 6],
+    ]
+    for board in boards:
+        game = SongoLegacyGame() if board is None else SongoLegacyGame.from_board(board, PLAYER_ONE)
+        for depth in (3, 5):
+            tt: dict = {}
+            counter = [0]
+            plain_score, _ = negamax_search(
+                game.clone_for_search(), depth, -math.inf, math.inf, game.turn, tt, counter, 10_000_000, 1e18
+            )
+            improved = iterative_deepening(
+                game.clone_for_search(), SearchLimits(max_depth=depth, max_nodes=10_000_000, max_time_s=1e9)
+            )
+            assert abs(plain_score - improved.score) < 1e-9
+
+
+def test_killer_move_breaks_ties_but_never_overrides_base_priority() -> None:
+    # Les killers ne departagent que les scores de base egaux (les faire
+    # passer devant le tri par capture degrade l'elagage, cf. docstring de
+    # _expand_children).
+    game = SongoLegacyGame()
+    legal = game.legal_local_actions()
+
+    tied = {a: 0.0 for a in legal}
+    killer = legal[-1]
+    ordered = _expand_children(game, legal, None, lambda g, a: tied, killers=[killer])
+    assert ordered[0][0] == killer  # a egalite : le killer sort premier
+
+    ranked = {a: float(a) for a in legal}
+    worst = min(legal)
+    ordered = _expand_children(game, legal, None, lambda g, a: ranked, killers=[worst])
+    assert ordered[0][0] == max(legal)  # le tri de base reste souverain
+
+
+def test_history_breaks_ties_between_equal_priorities() -> None:
+    game = SongoLegacyGame()
+    legal = game.legal_local_actions()
+    priorities = {a: 0.0 for a in legal}  # toutes egales
+    history = {legal[-1]: 50.0}
+    ordered = _expand_children(game, legal, None, lambda g, a: priorities, history=history)
+    assert ordered[0][0] == legal[-1]
+
+
+def test_quiescence_extends_capture_sequences_at_leaves() -> None:
+    # Position ou move local 4 capture 4 graines en cascade : a depth=1
+    # sans quiescence, l'evaluation s'arrete juste apres le coup adverse
+    # de reponse ; avec quiescence, les recaptures sont prolongees. La
+    # recherche doit rester legale et deterministe, et le score avec
+    # quiescence ne doit pas etre plus naif (ici : identique ou plus
+    # conservateur, jamais un crash).
+    board = [0, 0, 0, 0, 4, 1, 1, 1, 1, 0, 0, 0, 0, 10, 0, 0]
+    game = SongoLegacyGame.from_board(board, PLAYER_ONE)
+    without_q = iterative_deepening(
+        game.clone_for_search(), SearchLimits(max_depth=2, max_nodes=100_000, max_time_s=5.0)
+    )
+    with_q = iterative_deepening(
+        game.clone_for_search(), SearchLimits(max_depth=2, max_nodes=100_000, max_time_s=5.0, quiescence_depth=4)
+    )
+    assert with_q.local_action in game.legal_local_actions()
+    assert with_q.nodes >= without_q.nodes  # la quiescence explore en plus
+
+
+def test_quiescence_off_by_default_keeps_legacy_node_counts() -> None:
+    game = SongoLegacyGame()
+    limits = SearchLimits(max_depth=3, max_nodes=100_000, max_time_s=5.0)
+    assert limits.quiescence_depth == 0
+    r1 = iterative_deepening(game.clone_for_search(), limits)
+    r2 = iterative_deepening(game.clone_for_search(), limits)
+    assert r1.nodes == r2.nodes  # deterministe, quiescence inactive

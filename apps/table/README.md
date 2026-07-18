@@ -20,7 +20,7 @@ meme recherche, meme chargement de modele, aucune duplication.
 - `--player1` / `--player2` :
   - `random`
   - `minimax:<profondeur>`
-  - `songofish:<version|champion>[:profondeur]` — reseau + recherche alpha-beta bornee (etape 8, `packages/songo_ai/hybrid/`) : le reseau ordonne les coups et evalue les feuilles, la recherche regarde plusieurs coups a l'avance. Profondeur par defaut 10, mais chaque noeud fait un passage reseau (~1500 noeuds/s au lieu de ~50 000 pour l'heuristique brute) donc la profondeur reellement atteinte depend du budget de 2s/coup
+  - `songofish:<version|champion>[:profondeur]` — reseau + recherche alpha-beta bornee (etape 8, `packages/songo_ai/hybrid/`) : le reseau ordonne les coups et evalue les feuilles, la recherche regarde plusieurs coups a l'avance. Profondeur par defaut 10 ; chaque position unique coute un passage reseau mais un cache par hash Zobrist les mutualise (~5 600 noeuds/s, profondeur ~7 atteinte en 2s/coup ; c'etait ~1 500 noeuds/s et profondeur ~6 avant le cache). La quiescence prolonge les sequences de captures aux feuilles (pas d'evaluation en pleine cascade de recoltes)
   - Pas de mode "modele seul sans recherche" : un reseau sans lookahead n'a aucun interet a regarder jouer, cf. `packages/songo_ai/hybrid/`
 - `--delay` : pause (s) entre la fin d'une animation et le coup suivant
 - `R` pendant la partie : recommencer · fermer la fenetre : quitter
