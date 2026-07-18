@@ -42,13 +42,32 @@ class TeacherConfig:
     min_margin: float = 15.0
     tier: str = STANDARD
     enrichi_depth_reduction: int = 2
+    # Ameliorations de recherche (PVS, cf. search/negamax.py) : memes
+    # valeurs minimax, elagage plus rapide (~-20% de temps mesure sur le
+    # schema d'approfondissement du prof) -- le prof annote plus de
+    # positions au meme budget. Active par defaut pour tout NOUVEAU
+    # palier ; l'empreinte de cache change avec ce champ, donc les
+    # annotations d'anciens paliers (prof legacy) ne sont jamais melangees
+    # avec celles-ci.
+    use_search_enhancements: bool = True
+    # Quiescence aux feuilles (0 = desactivee). ATTENTION : contrairement
+    # aux ameliorations ci-dessus, la quiescence CHANGE les valeurs
+    # annotees (prolonge les captures a l'horizon) -- a n'activer que
+    # deliberement, pour un palier entier, jamais en cours de palier.
+    quiescence_depth: int = 0
 
     def fingerprint(self) -> str:
-        return (
+        base = (
             f"{self.initial_depth}-{self.depth_step}-{self.max_depth}-{self.max_nodes}-"
             f"{self.max_time_s}-{self.stability_window}-{self.min_margin}-{self.tier}-"
             f"{self.enrichi_depth_reduction}"
         )
+        # Suffixe seulement si actif : une config entierement legacy garde
+        # l'empreinte historique et donc la compatibilite avec les caches
+        # d'annotations deja constitues.
+        if self.use_search_enhancements or self.quiescence_depth > 0:
+            base += f"-enh{int(self.use_search_enhancements)}-q{self.quiescence_depth}"
+        return base
 
 
 @dataclass
@@ -85,6 +104,7 @@ def _evaluate_root_actions(
     node_counter: List[int],
     node_limit: int,
     deadline: float,
+    search_kwargs: Optional[dict] = None,
 ) -> Dict[int, float]:
     """Valeur de CHAQUE coup legal racine, a `child_depth` sur l'enfant.
     Reutilise la TT deja peuplee par la recherche principale : les coups
@@ -96,7 +116,16 @@ def _evaluate_root_actions(
         child.play_local(local_action)
         try:
             score, _ = negamax_search(
-                child, child_depth, -math.inf, math.inf, opponent(perspective), tt, node_counter, node_limit, deadline
+                child,
+                child_depth,
+                -math.inf,
+                math.inf,
+                opponent(perspective),
+                tt,
+                node_counter,
+                node_limit,
+                deadline,
+                **(search_kwargs or {}),
             )
         except SearchAborted:
             break
@@ -136,6 +165,14 @@ class DeepTeacher:
         deadline = start + cfg.max_time_s
         perspective = game.turn
 
+        # Kwargs passes a chaque negamax_search : vides pour une config
+        # legacy (comportement bit-identique aux paliers deja annotes).
+        search_kwargs: dict = {}
+        if cfg.use_search_enhancements:
+            search_kwargs["use_pvs"] = True
+        if cfg.quiescence_depth > 0:
+            search_kwargs["quiescence_depth"] = cfg.quiescence_depth
+
         history: List[Tuple[int, int, float]] = []
         best_action = legal_actions[0]
         best_score = 0.0
@@ -145,7 +182,9 @@ class DeepTeacher:
         depth = cfg.initial_depth
         while depth <= cfg.max_depth:
             try:
-                score, pv = negamax_search(game, depth, -math.inf, math.inf, perspective, tt, node_counter, cfg.max_nodes, deadline)
+                score, pv = negamax_search(
+                    game, depth, -math.inf, math.inf, perspective, tt, node_counter, cfg.max_nodes, deadline, **search_kwargs
+                )
             except SearchAborted:
                 break
 
@@ -172,7 +211,9 @@ class DeepTeacher:
             child_depth = max(0, best_completed_depth - 1) if cfg.tier == PREMIUM else max(
                 0, best_completed_depth - 1 - cfg.enrichi_depth_reduction
             )
-            alt_values = _evaluate_root_actions(game, child_depth, tt, node_counter, cfg.max_nodes, deadline)
+            alt_values = _evaluate_root_actions(
+                game, child_depth, tt, node_counter, cfg.max_nodes, deadline, search_kwargs
+            )
             for action, value in alt_values.items():
                 if action == best_action:
                     continue

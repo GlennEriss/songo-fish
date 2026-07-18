@@ -101,3 +101,52 @@ def test_annotation_cache_distinguishes_configs(tmp_path: Path) -> None:
 
     cache.get_or_annotate(teacher_a, game)
     assert cache.get(game.zobrist_hash(), teacher_b.config) is None
+
+
+# ---- prof ameliore (PVS/killers actives par defaut pour les nouveaux
+# paliers, cf. TeacherConfig.use_search_enhancements) ------------------
+
+
+def test_enhancements_active_by_default_and_change_fingerprint() -> None:
+    enhanced = _small_config()
+    legacy = _small_config(use_search_enhancements=False)
+    assert enhanced.use_search_enhancements is True
+    assert enhanced.fingerprint() != legacy.fingerprint()
+    # une config entierement legacy garde l'empreinte historique (sans
+    # suffixe) : compatibilite avec les caches d'annotations existants
+    assert legacy.fingerprint().endswith(f"-{legacy.enrichi_depth_reduction}")
+
+
+def test_enhanced_teacher_returns_same_score_as_legacy() -> None:
+    # PVS/killers/history ne changent pas la valeur minimax : le score
+    # annote doit etre identique a celui du prof legacy (le best_action
+    # peut differer uniquement entre coups strictement equivalents).
+    boards = [
+        None,
+        [0, 0, 0, 0, 4, 1, 1, 1, 1, 0, 0, 0, 0, 10, 0, 0],
+        [2, 3, 1, 0, 5, 2, 1, 4, 0, 2, 3, 1, 2, 0, 8, 6],
+    ]
+    for board in boards:
+        game = SongoLegacyGame() if board is None else SongoLegacyGame.from_board(board, PLAYER_ONE)
+        if game.finished:
+            continue
+        # budgets larges : les deux profs doivent terminer les memes
+        # profondeurs (sinon la comparaison de scores n'a pas de sens)
+        legacy = DeepTeacher(_small_config(use_search_enhancements=False, max_time_s=30.0)).annotate(
+            game.clone_for_search()
+        )
+        enhanced = DeepTeacher(_small_config(max_time_s=30.0)).annotate(game.clone_for_search())
+        assert legacy.depth == enhanced.depth
+        legacy_score = legacy.action_values[legacy.best_action]
+        enhanced_score = enhanced.action_values[enhanced.best_action]
+        assert legacy_score is not None and enhanced_score is not None
+        assert abs(legacy_score - enhanced_score) < 1e-9
+
+
+def test_teacher_quiescence_is_opt_in_and_versioned() -> None:
+    default = _small_config()
+    with_q = _small_config(quiescence_depth=4)
+    assert default.quiescence_depth == 0
+    assert with_q.fingerprint() != default.fingerprint()
+    annotation = DeepTeacher(with_q).annotate(SongoLegacyGame())
+    assert annotation.best_action in SongoLegacyGame().legal_local_actions()

@@ -106,13 +106,13 @@ def test_tt_move_still_takes_priority_over_priority_fn() -> None:
     assert ordered[0][0] == 5
 
 
-# ---- ameliorations de recherche (killers/history/PVS/aspiration/quiescence),
-# exactitude et ordonnancement -----------------------------------------
+# ---- ameliorations de recherche (PVS/aspiration/quiescence), exactitude
+# et ordonnancement ----------------------------------------------------
 
 
 def test_improved_search_returns_same_exact_score_as_plain_negamax() -> None:
-    # PVS + killers + history + aspiration sont des optimisations
-    # d'elagage : la valeur minimax exacte ne doit jamais changer.
+    # PVS + aspiration sont des optimisations d'elagage : la valeur
+    # minimax exacte ne doit jamais changer.
     import math
 
     from songo_ai.search.negamax import negamax_search
@@ -134,33 +134,6 @@ def test_improved_search_returns_same_exact_score_as_plain_negamax() -> None:
                 game.clone_for_search(), SearchLimits(max_depth=depth, max_nodes=10_000_000, max_time_s=1e9)
             )
             assert abs(plain_score - improved.score) < 1e-9
-
-
-def test_killer_move_breaks_ties_but_never_overrides_base_priority() -> None:
-    # Les killers ne departagent que les scores de base egaux (les faire
-    # passer devant le tri par capture degrade l'elagage, cf. docstring de
-    # _expand_children).
-    game = SongoLegacyGame()
-    legal = game.legal_local_actions()
-
-    tied = {a: 0.0 for a in legal}
-    killer = legal[-1]
-    ordered = _expand_children(game, legal, None, lambda g, a: tied, killers=[killer])
-    assert ordered[0][0] == killer  # a egalite : le killer sort premier
-
-    ranked = {a: float(a) for a in legal}
-    worst = min(legal)
-    ordered = _expand_children(game, legal, None, lambda g, a: ranked, killers=[worst])
-    assert ordered[0][0] == max(legal)  # le tri de base reste souverain
-
-
-def test_history_breaks_ties_between_equal_priorities() -> None:
-    game = SongoLegacyGame()
-    legal = game.legal_local_actions()
-    priorities = {a: 0.0 for a in legal}  # toutes egales
-    history = {legal[-1]: 50.0}
-    ordered = _expand_children(game, legal, None, lambda g, a: priorities, history=history)
-    assert ordered[0][0] == legal[-1]
 
 
 def test_quiescence_extends_capture_sequences_at_leaves() -> None:

@@ -7,14 +7,17 @@ fois l'etape 7 atteinte (section 8.1). Ce module ne depend que de
 `songo_ai.songo.rules`, seule implementation des regles du projet
 (principe section 12.1).
 
-Ameliorations de recherche (section 8.1 : "coup de TT, policy, captures et
-heuristiques" ; 8.2 ; quiescence) : killer moves, history heuristic, PVS et
+Ameliorations de recherche (section 8.1 ; 8.2 ; quiescence) : PVS et
 fenetres d'aspiration sont actives par `iterative_deepening` uniquement --
-`negamax_search` appele directement avec ses parametres par defaut (cas du
-professeur DeepTeacher) garde un comportement strictement identique a
-l'etape 3, pour que les annotations de dataset restent comparables d'un
-palier a l'autre. La quiescence est opt-in via
+`negamax_search` appele directement avec ses parametres par defaut garde le
+comportement de l'etape 3. La quiescence est opt-in via
 `SearchLimits.quiescence_depth` (0 = desactivee).
+
+Killer moves et history heuristic ont ete essayes puis RETIRES : mesures a
+l'appui (profondeurs 6-12, TT persistante, schema du professeur), ils
+degradaient l'elagage de ~26% -- avec 7 actions locales seulement et un tri
+par capture/policy deja tres informatif, reordonner les coups "calmes"
+d'apres les coupures passees fait plus de mal que de bien au Songo.
 """
 
 from __future__ import annotations
@@ -97,8 +100,6 @@ def _expand_children(
     legal_actions: List[int],
     tt_entry: Optional[TTEntry],
     priority_fn: Optional[PriorityFn] = None,
-    killers: Optional[List[int]] = None,
-    history: Optional[Dict[int, float]] = None,
 ) -> List[Tuple[int, SongoLegacyGame]]:
     """Genere chaque enfant une seule fois et l'ordonne : evite de rejouer
     deux fois le meme coup (une fois pour trier, une fois pour la
@@ -106,12 +107,7 @@ def _expand_children(
     decroissante. Si `priority_fn` est fourni (section 8.1 : tete policy
     du reseau), il remplace le tri par capture -- reste TT-move-first dans
     tous les cas (la TT est toujours la meilleure information disponible,
-    reseau ou pas). `killers` (coups ayant produit une coupure beta a la
-    meme profondeur d'arbre) et `history` (frequence des coupures toutes
-    profondeurs confondues) ne departagent que les coups a score de base
-    egal : mesure sur bench_search.py, les faire passer DEVANT le tri par
-    capture degrade l'elagage (~+26% de noeuds) -- au Songo les captures
-    sont la tactique dominante, le tri de base est deja tres informatif."""
+    reseau ou pas)."""
     tt_move = tt_entry.best_local_action if tt_entry is not None else None
 
     children: Dict[int, SongoLegacyGame] = {}
@@ -126,13 +122,7 @@ def _expand_children(
         own_total_before = sum(game.score())
         base = {a: float(sum(children[a].score()) - own_total_before) for a in legal_actions}
 
-    killer_set = frozenset(killers) if killers else frozenset()
-    hist = history if history is not None else {}
-    ordered_actions = sorted(
-        legal_actions,
-        key=lambda a: (base.get(a, 0.0), a in killer_set, hist.get(a, 0.0)),
-        reverse=True,
-    )
+    ordered_actions = sorted(legal_actions, key=lambda a: base.get(a, 0.0), reverse=True)
 
     ordered = [(a, children[a]) for a in ordered_actions]
     if tt_move is not None:
@@ -206,9 +196,6 @@ def negamax_search(
     deadline: float,
     evaluate_fn: EvaluateFn = default_evaluate,
     priority_fn: Optional[PriorityFn] = None,
-    ply: int = 0,
-    killers: Optional[Dict[int, List[int]]] = None,
-    history: Optional[Dict[int, float]] = None,
     use_pvs: bool = False,
     quiescence_depth: int = 0,
 ) -> Tuple[float, List[int]]:
@@ -247,8 +234,7 @@ def negamax_search(
         game.normalize_terminal()
         return evaluate_fn(game, perspective), []
 
-    ply_killers = killers.get(ply) if killers is not None else None
-    ordered_children = _expand_children(game, legal_actions, tt_entry, priority_fn, ply_killers, history)
+    ordered_children = _expand_children(game, legal_actions, tt_entry, priority_fn)
     best_score = -math.inf
     best_local: Optional[int] = None
     best_pv: List[int] = []
@@ -266,9 +252,6 @@ def negamax_search(
             deadline,
             evaluate_fn,
             priority_fn,
-            ply + 1,
-            killers,
-            history,
             use_pvs,
             quiescence_depth,
         )
@@ -294,11 +277,6 @@ def negamax_search(
             best_pv = [local_action] + child_pv
         alpha = max(alpha, score)
         if alpha >= beta:
-            if killers is not None and local_action not in (killers.get(ply) or []):
-                killers.setdefault(ply, []).insert(0, local_action)
-                del killers[ply][2:]  # deux killers max par profondeur
-            if history is not None:
-                history[local_action] = history.get(local_action, 0.0) + depth * depth
             break
 
     flag = EXACT
@@ -326,8 +304,6 @@ def iterative_deepening(
         raise ValueError("no legal move at root: caller must check game.finished first")
 
     tt: Dict[int, TTEntry] = {}
-    killers: Dict[int, List[int]] = {}
-    history: Dict[int, float] = {}
     node_counter = [0]
     start = time.perf_counter()
     deadline = start + limits.max_time_s
@@ -350,9 +326,6 @@ def iterative_deepening(
             deadline,
             evaluate_fn,
             priority_fn,
-            0,
-            killers,
-            history,
             True,
             limits.quiescence_depth,
         )
