@@ -114,6 +114,46 @@ CURATED_POSITIONS: List[_CuratedPosition] = [
         turn=PLAYER_TWO,  # "lorsque le joueur au cote de 5 commence a jouer" -> A commence
         source="docs/III. Gestion des fins/Songo_Fin_03.jpg",
     ),
+    _CuratedPosition(
+        label="fin_5contre4_b_au_trait",
+        # meme position que ci-dessus, mais c'est B (4) qui commence cette
+        # fois -- le manuscrit affirme "il gagne forcement 3 pions sur les
+        # neuf" (contre 2 seulement quand A commence) : claim testable,
+        # surprenant en apparence puisque B a moins de graines ET part
+        # avec le trait.
+        board=_board_from_cases({1: 1, 2: 1, 3: 1, 4: 1, 5: 1}, {1: 1, 2: 1, 3: 1, 4: 1}, p1_store=30, p2_store=31),
+        turn=PLAYER_ONE,
+        source="docs/III. Gestion des fins/Songo_Fin_04.jpg",
+    ),
+    _CuratedPosition(
+        label="fin_6contre5_a_au_trait",
+        # A1-A6=1 chacun (6), B1-B5=1 chacun (5), 11 en jeu. Manuscrit :
+        # "celui au cote de 6 aura 5 pions lorsque c'est lui le premier a
+        # jouer" -- affirmation surprenante (le cote a 6 finirait quand
+        # meme avec MOINS que la moitie du total, meme en commencant).
+        board=_board_from_cases({1: 1, 2: 1, 3: 1, 4: 1, 5: 1, 6: 1}, {1: 1, 2: 1, 3: 1, 4: 1, 5: 1}, p1_store=29, p2_store=30),
+        turn=PLAYER_TWO,
+        source="docs/III. Gestion des fins/Songo_Fin_06.jpg",
+    ),
+    _CuratedPosition(
+        label="fin_6contre5_b_au_trait",
+        # meme position, B (5) commence cette fois. Manuscrit : "si c'est
+        # celui au cote de 5 [qui commence], celui de 6 n'aura que 3 pions."
+        board=_board_from_cases({1: 1, 2: 1, 3: 1, 4: 1, 5: 1, 6: 1}, {1: 1, 2: 1, 3: 1, 4: 1, 5: 1}, p1_store=29, p2_store=30),
+        turn=PLAYER_ONE,
+        source="docs/III. Gestion des fins/Songo_Fin_06.jpg",
+    ),
+    _CuratedPosition(
+        label="fin_7contre5_a_au_trait",
+        # A1-A7=1 chacun (7), B1-B5=1 chacun (5), 12 en jeu. Manuscrit :
+        # "chaque cote gagne 6 pions sur les 12" -- partage egal revendique
+        # (contrairement aux combinaisons precedentes, toutes asymetriques).
+        board=_board_from_cases(
+            {1: 1, 2: 1, 3: 1, 4: 1, 5: 1, 6: 1, 7: 1}, {1: 1, 2: 1, 3: 1, 4: 1, 5: 1}, p1_store=29, p2_store=29
+        ),
+        turn=PLAYER_TWO,  # "le joueur A a mis 2 en A7" -- A commence dans l'exemple illustre
+        source="docs/III. Gestion des fins/Songo_Fin_09.jpg",
+    ),
 ]
 
 
