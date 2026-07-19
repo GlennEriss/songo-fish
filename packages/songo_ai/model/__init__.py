@@ -14,6 +14,7 @@ from .registry import (
     promote_version,
     register_model,
     save_registry,
+    train_and_register,
 )
 from .train import EpochMetrics, train_model, train_overfit
 
@@ -40,4 +41,5 @@ __all__ = [
     "promote_version",
     "register_model",
     "save_registry",
+    "train_and_register",
 ]

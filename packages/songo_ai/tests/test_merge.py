@@ -55,3 +55,54 @@ def test_merge_releases_keeps_trajectory_ids_within_their_original_split(tmp_pat
     assert merged_train_ids == original_train_ids
     assert merged_val_ids == original_val_ids
     assert original_train_ids.isdisjoint(original_val_ids)
+
+
+def _states_in(path: Path) -> list:
+    return [tuple(json.loads(line)["state"]) for line in path.read_text().splitlines()]
+
+
+def test_merge_without_deduplicate_keeps_cross_release_duplicates(tmp_path: Path) -> None:
+    # Meme seed -> memes trajectoires -> memes positions dans les deux
+    # releases : sans deduplicate, la fusion brute les garde toutes.
+    release_a = tmp_path / "a"
+    release_b = tmp_path / "b"
+    build_dataset(num_positions=12, out_dir=release_a, seed=7, teacher_config=_tiny_config())
+    build_dataset(num_positions=12, out_dir=release_b, seed=7, teacher_config=_tiny_config())
+
+    merged_dir = tmp_path / "merged_raw"
+    manifest = merge_releases([release_a, release_b], merged_dir, deduplicate=False)
+    assert manifest["total_positions"] == 24  # rien de retire
+
+
+def test_merge_with_deduplicate_removes_cross_release_state_duplicates(tmp_path: Path) -> None:
+    release_a = tmp_path / "a"
+    release_b = tmp_path / "b"
+    build_dataset(num_positions=12, out_dir=release_a, seed=7, teacher_config=_tiny_config())
+    build_dataset(num_positions=12, out_dir=release_b, seed=7, teacher_config=_tiny_config())
+
+    merged_dir = tmp_path / "merged_dedup"
+    manifest = merge_releases([release_a, release_b], merged_dir, deduplicate=True)
+
+    assert manifest["total_positions"] < 24  # les doublons inter-releases sont retires
+
+    for split in ("train", "val", "test"):
+        states = _states_in(merged_dir / f"{split}.jsonl")
+        assert len(states) == len(set(states))  # plus aucun doublon dans un meme split
+
+
+def test_merge_with_deduplicate_never_leaks_train_state_into_val_or_test(tmp_path: Path) -> None:
+    release_a = tmp_path / "a"
+    release_b = tmp_path / "b"
+    build_dataset(num_positions=12, out_dir=release_a, seed=11, teacher_config=_tiny_config())
+    build_dataset(num_positions=12, out_dir=release_b, seed=11, teacher_config=_tiny_config())
+
+    merged_dir = tmp_path / "merged_no_leak"
+    merge_releases([release_a, release_b], merged_dir, deduplicate=True)
+
+    train_states = set(_states_in(merged_dir / "train.jsonl"))
+    val_states = set(_states_in(merged_dir / "val.jsonl"))
+    test_states = set(_states_in(merged_dir / "test.jsonl"))
+
+    assert train_states.isdisjoint(val_states)
+    assert train_states.isdisjoint(test_states)
+    assert val_states.isdisjoint(test_states)

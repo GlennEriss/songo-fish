@@ -17,13 +17,25 @@ from typing import Dict, List
 from .schema import DATASET_VERSION, RULES_VERSION
 
 
-def merge_releases(release_dirs: List[Path], out_dir: Path) -> dict:
+def merge_releases(release_dirs: List[Path], out_dir: Path, deduplicate: bool = False) -> dict:
+    """`deduplicate=True` (section 6.3, plafonnement/deduplication du
+    corpus) : releases distinctes (seeds/trajectory_id differents par
+    construction) peuvent tout de meme produire la MEME position (state
+    canonique) par des chemins de partie differents -- le plafonnement
+    par run de `sample_positions` ne le voit pas puisqu'il ne compare
+    jamais deux releases entre elles. On deduplique train d'abord (garde
+    la premiere occurrence), puis val/test sont dedupliques ET filtres
+    contre tout ce qui a deja ete garde -- jamais l'inverse : une position
+    ne change jamais de split, elle est seulement supprimee si elle
+    fuirait train vers val/test (une contamination train/val serait pire
+    qu'un doublon)."""
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
     counts: Dict[str, int] = {"train": 0, "val": 0, "test": 0}
     checksums: Dict[str, str] = {}
     source_manifests = []
+    seen_states: set = set()
 
     for split in ("train", "val", "test"):
         shard_path = out_dir / f"{split}.jsonl"
@@ -38,6 +50,11 @@ def merge_releases(release_dirs: List[Path], out_dir: Path) -> dict:
                         line = line.strip()
                         if not line:
                             continue
+                        if deduplicate:
+                            state_key = tuple(json.loads(line)["state"])
+                            if state_key in seen_states:
+                                continue
+                            seen_states.add(state_key)
                         out_f.write(line + "\n")
                         counts[split] += 1
         checksums[split] = hashlib.sha256(shard_path.read_bytes()).hexdigest()
