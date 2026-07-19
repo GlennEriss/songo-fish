@@ -38,6 +38,23 @@ minimax classique, pas le réseau isolément (mesuré : le réseau seul perd
 92% de ses parties contre un minimax profondeur 4 ; réseau+recherche bat
 un minimax profondeur 14/5s de réflexion).
 
+**Tout est développé en Python côté entraînement, mais rien de tout ça ne
+tourne en Python dans le jeu final** — deux parties bien distinctes,
+aucune des deux ne nécessite Python à l'exécution :
+
+- **Le réseau** (la partie "apprise", impossible à réécrire à la main
+  fidèlement) est exporté au format **ONNX** (§1) : `Microsoft.ML.OnnxRuntime`
+  en C# le charge et l'exécute nativement, zéro dépendance Python.
+- **La recherche alpha-beta** (§3) n'est **pas un modèle** — c'est un
+  algorithme classique (boucles, comparaisons, ~250 lignes), au même titre
+  que n'importe quelle autre logique de jeu déjà écrite en C#. Elle se
+  **réimplémente nativement en C#** à partir du pseudocode du §3, elle ne
+  s'exporte pas et ne s'appelle pas à distance.
+
+Le jeu livré est donc 100% autonome (ONNX Runtime + C# natif). Python ne
+sert qu'à l'entraînement, un processus qui reste entièrement de notre
+côté.
+
 ## 1. Où récupérer le modèle
 
 L'entraînement a tourné en local (pas sur GCP — GCP n'a servi qu'à
