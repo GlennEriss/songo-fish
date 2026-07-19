@@ -20,7 +20,7 @@ meme recherche, meme chargement de modele, aucune duplication.
 - `--player1` / `--player2` :
   - `random`
   - `minimax:<profondeur>`
-  - `songofish:<version|champion>[:profondeur]` — reseau + recherche alpha-beta bornee (etape 8, `packages/songo_ai/hybrid/`) : le reseau ordonne les coups et evalue les feuilles, la recherche regarde plusieurs coups a l'avance. Profondeur par defaut 10 ; chaque position unique coute un passage reseau mais un cache par hash Zobrist les mutualise (~5 600 noeuds/s, profondeur ~7 atteinte en 2s/coup ; c'etait ~1 500 noeuds/s et profondeur ~6 avant le cache). La quiescence prolonge les sequences de captures aux feuilles (pas d'evaluation en pleine cascade de recoltes)
+  - `songofish:<version|champion>[:profondeur]` — reseau + recherche alpha-beta bornee (etape 8, `packages/songo_ai/hybrid/`) : le reseau ordonne les coups et evalue les feuilles, la recherche regarde plusieurs coups a l'avance. Profondeur par defaut 10 ; recherche interne sur `FastSongoGame` (Numba, pas la reference) + cache reseau par hash Zobrist -> ~8 200 vrais appels reseau/s (etait ~1 500 noeuds/s avant tout ca). Profondeur 14 : ~3min17 (etait ~5min23 avant FastSongoGame). La quiescence prolonge les sequences de captures aux feuilles (pas d'evaluation en pleine cascade de recoltes)
   - Pas de mode "modele seul sans recherche" : un reseau sans lookahead n'a aucun interet a regarder jouer, cf. `packages/songo_ai/hybrid/`
 - `--delay` : pause (s) entre la fin d'une animation et le coup suivant
 - `R` pendant la partie : recommencer · fermer la fenetre : quitter

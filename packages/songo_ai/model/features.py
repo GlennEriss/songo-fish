@@ -11,7 +11,8 @@ from __future__ import annotations
 
 from typing import List, Sequence
 
-from songo_ai.songo.rules import BOARD_SIZE, PLAYER_ONE, PLAYER_TWO, TOTAL_SEEDS, SongoLegacyGame
+from songo_ai.songo.fast_rules import FastSongoGame
+from songo_ai.songo.rules import BOARD_SIZE, PLAYER_ONE, PLAYER_TWO, TOTAL_SEEDS
 
 FEATURE_SIZE = 33
 NUM_ACTIONS = 7
@@ -22,7 +23,11 @@ def observation_features(state: Sequence[int], legal_mask: Sequence[bool]) -> Li
     "adversaire", cf. songo_ai.dataset.schema.canonicalize_board) : on
     reconstruit un jeu temporaire avec turn=PLAYER_ONE pour calculer les
     grandeurs derivees (mobilite adverse, transmission) sans dupliquer la
-    logique des regles."""
+    logique des regles. FastSongoGame (Numba) plutot que SongoLegacyGame :
+    cette fonction est appelee a CHAQUE noeud de la recherche SongoFish
+    (cf. hybrid/network_eval.py) -- mesure : ~45 microsecondes/appel avec
+    la reference, l'essentiel du cout residuel de _features_for une fois
+    le reste du chemin deja sur FastSongoGame."""
     assert len(state) == BOARD_SIZE
 
     counters = [v / TOTAL_SEEDS for v in state]
@@ -32,8 +37,8 @@ def observation_features(state: Sequence[int], legal_mask: Sequence[bool]) -> Li
     my_territory = sum(state[0:7]) / TOTAL_SEEDS
     opp_territory = sum(state[7:14]) / TOTAL_SEEDS
 
-    mine_game = SongoLegacyGame.from_board(list(state), PLAYER_ONE)
-    opponent_game = SongoLegacyGame.from_board(list(state), PLAYER_TWO)
+    mine_game = FastSongoGame.from_board(list(state), PLAYER_ONE)
+    opponent_game = FastSongoGame.from_board(list(state), PLAYER_TWO)
 
     my_mobility = sum(mask) / 7.0
     opp_mobility = len(opponent_game.legal_local_actions()) / 7.0 if not opponent_game.finished else 0.0

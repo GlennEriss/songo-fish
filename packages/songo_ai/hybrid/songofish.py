@@ -3,7 +3,17 @@ feuille, cf. network_eval.py) + recherche Alpha-Beta bornee (temps/noeuds/
 profondeur, cf. songo_ai.search.negamax.SearchLimits). Reutilise le meme
 Agent Protocol que le reste du projet (songo_ai.generation.agents.Agent),
 pour brancher directement sur la table de jeu ou en tournoi sans code
-supplementaire."""
+supplementaire.
+
+La recherche interne tourne sur `FastSongoGame` (Numba), pas
+`SongoLegacyGame` (reference) : mesure a profondeur 12, ~61% du temps
+partait dans la reconstruction des features (legal_mask, etc.) via le
+moteur de reference -- gain mesure ~2-3x en branchant le moteur rapide
+(meme resultat garanti par le test differentiel de fast_rules.py, section
+4.3 : "FastSongoGame est celle utilisee en pratique par la recherche des
+que la performance compte"). L'appelant (table de jeu, tournoi) continue
+de jouer/animer sur son propre SongoLegacyGame ; seul le `local_action`
+choisi traverse la frontiere, aucune conversion cote appelant."""
 
 from __future__ import annotations
 
@@ -14,6 +24,8 @@ from typing import Optional
 from songo_ai.hybrid.network_eval import NetworkCache, make_network_evaluate, make_network_priority
 from songo_ai.model.network import SongoNet
 from songo_ai.search.negamax import SearchLimits, iterative_deepening
+from songo_ai.songo.fast_rules import FastSongoGame
+from songo_ai.songo.fast_rules import warmup as _warmup_fast_rules
 from songo_ai.songo.rules import SongoLegacyGame
 
 
@@ -45,9 +57,14 @@ def make_songofish_agent(model: SongoNet, config: Optional[SongoFishConfig] = No
         max_time_s=cfg.max_time_s,
         quiescence_depth=cfg.quiescence_depth,
     )
+    # Force la compilation JIT une seule fois, a la creation de l'agent :
+    # sans ca, le tout premier appel (souvent le premier coup d'une partie
+    # reelle) payerait la compilation Numba en plus de la recherche.
+    _warmup_fast_rules()
 
     def agent(game: SongoLegacyGame, rng: Optional[random.Random] = None) -> int:
-        result = iterative_deepening(game.clone_for_search(), limits, evaluate_fn, priority_fn)
+        fast_game = FastSongoGame.from_board(game.board, game.turn)
+        result = iterative_deepening(fast_game.clone_for_search(), limits, evaluate_fn, priority_fn)
         return result.local_action
 
     return agent

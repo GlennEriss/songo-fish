@@ -15,11 +15,21 @@ Les deux fonctions retrouvent le meme etat canonique que celui vu a
 l'entrainement (songo_ai.dataset.schema.canonicalize_board) : le reseau n'a
 jamais vu autre chose que "mon" plateau vu du joueur au trait.
 
-Cout : le passage avant PyTorch est le poste dominant de SongoFish
-(~0,7 ms/noeud, surcout d'appel plus que calcul pour un reseau de ~105k
-parametres). Un cache par hash Zobrist (les transpositions ramenent les
-memes positions dans l'arbre) partage entre les deux tetes fait qu'une
-position unique n'est jamais evaluee deux fois."""
+Cout : mesure a profondeur 12 (voir hybrid/songofish.py), ~61% du temps
+passait dans la reconstruction des features (legal_mask, canonicalisation)
+via SongoLegacyGame -- moteur de reference en Python pur, pas concu pour
+une boucle chaude. `game` ici est donc un `FastSongoGame` (Numba, meme
+interface, meme resultat garanti par test differentiel section 4.3) des
+que la recherche est en cours ; le type hint `SongoLegacyGame` documente
+juste l'interface duck-typee requise (board/turn/legal_mask/zobrist_hash),
+comme deja le cas pour EvaluateFn/PriorityFn dans search/negamax.py.
+
+Cache : le passage avant PyTorch reste le second poste de cout (~75
+microsecondes/appel). Un cache par hash Zobrist (les transpositions
+ramenent les memes positions dans l'arbre) partage entre les deux tetes
+fait qu'une position unique n'est jamais evaluee deux fois -- mais a
+grande profondeur les transpositions sont rares (~1-2% de hits mesures),
+l'essentiel du gain vient du cote FastSongoGame, pas du cache."""
 
 from __future__ import annotations
 
@@ -42,7 +52,11 @@ _CACHE_MAX_ENTRIES = 200_000
 
 
 def _features_for(game: SongoLegacyGame) -> torch.Tensor:
-    state = canonicalize_board(tuple(int(v) for v in game.board), game.turn)
+    # tolist() : conversion numpy native (C), plus rapide qu'une
+    # comprehension Python element par element -- utile ici car `game` est
+    # generalement un FastSongoGame (board = numpy array).
+    board = game.board.tolist() if hasattr(game.board, "tolist") else list(game.board)
+    state = canonicalize_board(tuple(board), game.turn)
     legal_mask = game.legal_mask()
     return torch.tensor(observation_features(state, legal_mask), dtype=torch.float32).unsqueeze(0)
 
