@@ -7,6 +7,26 @@ récupérer le réseau (ONNX), l'algorithme de recherche à réimplémenter, et
 surtout **le point qui a causé une confusion réelle pendant le
 développement : profondeur de recherche ≠ temps de réflexion.**
 
+## Checklist de démarrage
+
+- [ ] Accès au dépôt privé `github.com/GlennEriss/songo-fish` confirmé
+      (déjà collaborateur invité) — sans ça, rien ci-dessous n'est
+      accessible.
+- [ ] Télécharger `model_v0.2.0.onnx` depuis la release
+      [`model-v0.2.0`](https://github.com/GlennEriss/songo-fish/releases/tag/model-v0.2.0)
+      (§1).
+- [ ] Ajouter `Microsoft.ML.OnnxRuntime` au projet C# (NuGet).
+- [ ] Lire dans l'ordre : §0 (pourquoi réseau seul ≠ suffisant) → §2
+      (features d'entrée, à reproduire exactement) → §3 (algorithme de
+      recherche) → §4 (profondeur vs budget de temps — **lire avant de
+      choisir une configuration**, source d'une vraie confusion pendant
+      le développement).
+- [ ] En cas de doute sur une formule ou un comportement de règle, le
+      code Python de référence est cité à chaque section correspondante
+      (fichier + fonction) — c'est la source de vérité en cas d'écart.
+- [ ] Toute question bloquante : contacter Glenn (propriétaire du dépôt),
+      pas de canal de support séparé pour l'instant.
+
 ## 0. Résumé en une phrase
 
 **Le réseau seul est faible. Le réseau + une recherche alpha-beta autour
@@ -33,12 +53,16 @@ distribué via une **release GitHub** :
 | `model_v0.2.0.onnx` | **Le fichier à utiliser côté C#.** Réseau exporté au format ONNX, chargeable directement via `Microsoft.ML.OnnxRuntime` (NuGet), sans dépendance Python côté jeu. |
 | `model_v0.2.0.pt` | Poids PyTorch bruts (référence Python uniquement, pas utilisable tel quel en C#). |
 
+L'architecture exacte (largeur, nombre de blocs, dropout) de la version
+chargée est donnée au §2 ci-dessous — pas besoin d'un autre fichier pour
+ça.
+
 Une future version (0.3.0, etc.) sera publiée de la même façon, sous un
 nouveau tag `model-vX.Y.Z` — vérifier la description du dépôt ou demander
 la dernière release si ce document n'a pas été mis à jour entre-temps.
-| `data/checkpoints/registry.json` | Historique des versions, métriques, config d'architecture (`width`, `num_blocks`, `dropout`) — utile pour savoir quelle version est "championne" actuellement. |
 
-Pour régénérer l'export ONNX après un futur ré-entraînement :
+Pour régénérer l'export ONNX après un futur ré-entraînement (usage
+interne, côté Python) :
 
 ```bash
 .venv/bin/python apps/trainer/scripts/export_onnx.py --version champion
