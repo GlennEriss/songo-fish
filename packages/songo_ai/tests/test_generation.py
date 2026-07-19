@@ -11,7 +11,7 @@ from songo_ai.generation import (
     random_agent,
     sample_positions,
 )
-from songo_ai.generation.sampling import ENDGAME, MIDGAME, OPENING, classify_phase
+from songo_ai.generation.sampling import ENDGAME, MIDGAME, OPENING, TIGHT_ENDGAME, classify_phase
 from songo_ai.songo.rules import SongoLegacyGame, assert_invariants
 
 
@@ -49,6 +49,28 @@ def test_classify_phase_thresholds() -> None:
     assert classify_phase(TrajectoryPosition(state, "g", 25, 30)) == ENDGAME
 
 
+def test_classify_phase_prioritizes_low_seed_count_over_move_ratio() -> None:
+    # Une position en debut de partie (par ratio de coups) mais deja
+    # assechee (peu de graines en jeu, ex. captures agressives) doit etre
+    # classee "fin_serree", pas "ouverture" -- cf. docs/III. Gestion des
+    # fins/, positions du type "6 contre 4"/"5 contre 4" (peu importe le
+    # numero du coup, ce qui compte est le solde de graines restant).
+    from songo_ai.generation.trajectories import TrajectoryPosition
+    from songo_ai.songo.rules import State
+
+    board = [1, 1, 1, 1, 0, 0, 0, 1, 1, 1, 1, 1, 0, 0, 40, 21]  # 9 en jeu, 61 deja captures
+    state = State(tuple(board), 2)
+    assert classify_phase(TrajectoryPosition(state, "g", 3, 30)) == TIGHT_ENDGAME
+
+
+def test_classify_phase_ignores_stored_seeds_only_counts_in_play() -> None:
+    from songo_ai.generation.trajectories import TrajectoryPosition
+    from songo_ai.songo.rules import State
+
+    state = State.initial()  # 70 graines en jeu, aucune capturee
+    assert classify_phase(TrajectoryPosition(state, "g", 0, 30)) == OPENING
+
+
 def test_sample_positions_respects_target_count_and_dedup() -> None:
     positions = generate_trajectories(lambda rng: random_agent, num_trajectories=20, seed=2)
     sampled = sample_positions(positions, target_count=50, seed=2, max_repeats=2)
@@ -69,7 +91,7 @@ def test_sample_positions_favors_midgame_and_endgame_over_opening() -> None:
     sampled = sample_positions(positions, target_count=200, seed=3)
     from songo_ai.generation.sampling import classify_phase as cp
 
-    phase_counts = {OPENING: 0, MIDGAME: 0, ENDGAME: 0}
+    phase_counts = {OPENING: 0, MIDGAME: 0, ENDGAME: 0, TIGHT_ENDGAME: 0}
     for p in sampled:
         phase_counts[cp(p)] += 1
-    assert phase_counts[MIDGAME] + phase_counts[ENDGAME] >= phase_counts[OPENING]
+    assert phase_counts[MIDGAME] + phase_counts[ENDGAME] + phase_counts[TIGHT_ENDGAME] >= phase_counts[OPENING]

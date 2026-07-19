@@ -15,6 +15,7 @@ Génération de dataset, entraînement du réseau, orchestration GCP. Consomme
 - `register_existing_models.py` — enregistrement rétroactif ponctuel des deux premières versions (ne pas relancer)
 - `train_new_version.py` — **modèle pour tout futur entraînement** : from scratch, enregistrement automatique, tournoi vs référence + champion actuel (`--version 0.2.0 --dataset-dir data/dataset_vXXX`)
 - `export_onnx.py` — exporte une version du registre vers ONNX (portage hors Python, ex. C#/Unity via `Microsoft.ML.OnnxRuntime`) : `--version champion`. Voir `docs/integration_csharp_model_recherche.md` pour le format d'entrée/sortie du réseau et comment le brancher derrière une recherche alpha-beta
+- `build_curated_endgames.py` — annote avec un budget dédié (120s/position) des positions de fin de partie choisies à la main d'après `docs/III. Gestion des fins/` et `docs/II. Contre-Attaques 2/` (combinaisons jugées importantes par des joueurs expérimentés). Plutôt que d'extraire ces stratégies comme des règles codées en dur — vérifié coûteux et peu concluant même sur des positions à 9-10 graines (30-47 coups de profondeur, plusieurs millions de nœuds, toujours pas de résolution exacte) — le prof les annote avec sa propre recherche ; le réseau apprend une vérité ancrée dans la recherche, pas une heuristique humaine qu'on peine à vérifier soi-même
 
 ## Versioning des modèles (`packages/songo_ai/model/registry.py`)
 
