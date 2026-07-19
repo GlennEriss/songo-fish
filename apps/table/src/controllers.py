@@ -33,7 +33,7 @@ def _load_versioned_model(entry: dict):
 
 
 def make_controller(spec: str):
-    """`spec` : "random" | "minimax:<profondeur>[:max_time_s]" | "songofish:<version|champion>[:profondeur]"."""
+    """`spec` : "random" | "minimax:<profondeur>[:max_time_s]" | "songofish:<version|champion>[:profondeur[:max_time_s]]"."""
     if spec == "random":
         return random_agent, "Aleatoire"
 
@@ -50,15 +50,23 @@ def make_controller(spec: str):
         return agent, f"Minimax profondeur {depth} (max {max_time_s:g}s)"
 
     if spec.startswith("songofish:"):
-        # reseau (ordonnancement + eval feuilles) + recherche alpha-beta bornee (etape 8)
+        # reseau (ordonnancement + eval feuilles) + recherche alpha-beta bornee
+        # (etape 8). profondeur = plafond, max_time_s (defaut 2s) reste le
+        # vrai facteur limitant : "songofish:champion:14" seul ne cherche PAS
+        # forcement a profondeur 14, juste jusqu'a profondeur 14 AU PLUS si le
+        # temps le permet -- il faut aussi relever max_time_s pour que le
+        # plafond ait une chance d'etre atteint (cf. apps/table/README.md).
         parts = spec.split(":")
         version = parts[1]
         depth = int(parts[2]) if len(parts) > 2 else 10
+        max_time_s = float(parts[3]) if len(parts) > 3 else 2.0
         entry = _resolve_model_entry(version)
         model = _load_versioned_model(entry)
-        agent = make_songofish_agent(model, SongoFishConfig(max_depth=depth, max_nodes=300_000, max_time_s=2.0))
-        return agent, f"SongoFish v{entry['version']} (recherche profondeur {depth})"
+        agent = make_songofish_agent(
+            model, SongoFishConfig(max_depth=depth, max_nodes=300_000, max_time_s=max_time_s)
+        )
+        return agent, f"SongoFish v{entry['version']} (profondeur max {depth}, budget {max_time_s:g}s)"
 
     raise ValueError(
-        f"controleur inconnu: {spec!r} (attendu: random | minimax:N | songofish:VERSION[:profondeur])"
+        f"controleur inconnu: {spec!r} (attendu: random | minimax:N | songofish:VERSION[:profondeur[:max_time_s]])"
     )

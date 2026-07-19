@@ -14,6 +14,7 @@ Génération de dataset, entraînement du réseau, orchestration GCP. Consomme
 - `gcp_startup_script.sh` — script de démarrage de la VM (rehydratation cache, build, upload, arrêt auto)
 - `register_existing_models.py` — enregistrement rétroactif ponctuel des deux premières versions (ne pas relancer)
 - `train_new_version.py` — **modèle pour tout futur entraînement** : from scratch, enregistrement automatique, tournoi vs référence + champion actuel (`--version 0.2.0 --dataset-dir data/dataset_vXXX`)
+- `export_onnx.py` — exporte une version du registre vers ONNX (portage hors Python, ex. C#/Unity via `Microsoft.ML.OnnxRuntime`) : `--version champion`. Voir `docs/integration_csharp_model_recherche.md` pour le format d'entrée/sortie du réseau et comment le brancher derrière une recherche alpha-beta
 
 ## Versioning des modèles (`packages/songo_ai/model/registry.py`)
 
@@ -39,7 +40,8 @@ Versions actuelles :
 | Version | Dataset | Statut | Notes |
 |---|---|---|---|
 | 0.0.1 | 10k (standard) | archivé | surapprentissage volontaire, validation pipeline (étape 6), pas un joueur |
-| 0.1.0 | 110k (10k standard + 100k profond) | **champion** | premier entraînement réel, généralisation validée, bat aléatoire/minimax profondeur 1 |
+| 0.1.0 | 110k (10k standard + 100k profond) | archivé | premier entraînement réel, généralisation validée, bat aléatoire/minimax profondeur 1 |
+| 0.2.0 | 392k dédupliquées (110k + 290k, seed 789) | **champion** | val_top1=54,7% (vs 48,4% pour 0.1.0) ; bat le champion précédent v0.1.0 à 81,5% (200 parties) ; réseau seul (sans recherche) reste faible face à minimax profondeur 4 (7,8%), mais une fois branché dans SongoFish (réseau+recherche), bat un minimax profondeur 14/5s de réflexion |
 
 Utilisation pour un nouvel entraînement :
 
