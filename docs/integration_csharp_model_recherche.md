@@ -18,16 +18,24 @@ minimax classique, pas le réseau isolément (mesuré : le réseau seul perd
 92% de ses parties contre un minimax profondeur 4 ; réseau+recherche bat
 un minimax profondeur 14/5s de réflexion).
 
-## 1. Où sont les fichiers (tout est local, rien sur un cloud)
+## 1. Où récupérer le modèle
 
-L'entraînement a tourné sur cette machine, pas sur GCP — GCP n'a servi
-qu'à **générer les données d'entraînement** (annotation des positions par
-le "professeur" alpha-beta), jamais à entraîner ni héberger le modèle.
+L'entraînement a tourné en local (pas sur GCP — GCP n'a servi qu'à
+**générer les données d'entraînement**, jamais à entraîner ni héberger le
+modèle), donc les fichiers ne sont pas dans le dépôt git (`data/` est
+volontairement exclu, ce sont des artefacts régénérables). Le modèle est
+distribué via une **release GitHub** :
 
-| Fichier | Contenu |
+**https://github.com/GlennEriss/songo-fish/releases/tag/model-v0.2.0**
+
+| Fichier (pièce jointe de la release) | Contenu |
 |---|---|
-| `data/checkpoints/model_v0.2.0.onnx` | **Le fichier à donner au dev C#.** Réseau exporté au format ONNX, chargeable directement via `Microsoft.ML.OnnxRuntime` (NuGet), sans dépendance Python côté jeu. |
-| `data/checkpoints/model_v0.2.0.pt` | Poids PyTorch bruts (référence Python uniquement, pas utilisable tel quel en C#). |
+| `model_v0.2.0.onnx` | **Le fichier à utiliser côté C#.** Réseau exporté au format ONNX, chargeable directement via `Microsoft.ML.OnnxRuntime` (NuGet), sans dépendance Python côté jeu. |
+| `model_v0.2.0.pt` | Poids PyTorch bruts (référence Python uniquement, pas utilisable tel quel en C#). |
+
+Une future version (0.3.0, etc.) sera publiée de la même façon, sous un
+nouveau tag `model-vX.Y.Z` — vérifier la description du dépôt ou demander
+la dernière release si ce document n'a pas été mis à jour entre-temps.
 | `data/checkpoints/registry.json` | Historique des versions, métriques, config d'architecture (`width`, `num_blocks`, `dropout`) — utile pour savoir quelle version est "championne" actuellement. |
 
 Pour régénérer l'export ONNX après un futur ré-entraînement :
