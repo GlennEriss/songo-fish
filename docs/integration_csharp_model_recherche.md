@@ -7,29 +7,92 @@ récupérer le réseau (ONNX), l'algorithme de recherche à réimplémenter, et
 surtout **le point qui a causé une confusion réelle pendant le
 développement : profondeur de recherche ≠ temps de réflexion.**
 
+## PRIORITÉ ACTUELLE (juillet 2026) : minimax + bidoua, PAS le réseau
+
+**Pour l'instant, n'implémente PAS le réseau (§1, §2, §3bis-réseau).**
+L'intégration prioritaire est **minimax + bonus territoire (bidoua/Yinda)
+seul, sans réseau du tout** — voir **§0bis** ci-dessous. Deux raisons :
+
+1. **Plus simple** : pas d'ONNX, pas de `Microsoft.ML.OnnxRuntime`, pas de
+   vecteur de 33 features à reproduire exactement (§2.1, le point le plus
+   piégeux du portage réseau). Juste les règles du jeu + un alpha-bêta +
+   une formule d'évaluation d'une dizaine de lignes.
+2. **C'est la version dont l'effet du bidoua est le mieux validé** :
+   tournoi 43 victoires sur 60 parties (IC95% 61,9%-83,5%) pour la
+   version avec bonus territoire contre sans, à recherche identique. La
+   combinaison réseau+bidoua (§3bis) existe côté Python mais son effet
+   n'a pas encore été mesuré avec la même rigueur — pas encore assez
+   solide pour en faire la priorité du portage.
+
+Le reste du document (réseau ONNX, §1-§3bis-réseau) reste valable et
+sera la prochaine étape une fois le résultat réseau+bidoua confirmé côté
+Python — mais ce n'est PAS ce qu'il faut coder maintenant.
+
 ## Checklist de démarrage
 
 - [ ] Accès au dépôt privé `github.com/GlennEriss/songo-fish` confirmé
       (déjà collaborateur invité) — sans ça, rien ci-dessous n'est
       accessible.
-- [ ] Télécharger `model_v0.2.0.onnx` depuis la release
-      [`model-v0.2.0`](https://github.com/GlennEriss/songo-fish/releases/tag/model-v0.2.0)
-      (§1).
-- [ ] Ajouter `Microsoft.ML.OnnxRuntime` au projet C# (NuGet).
-- [ ] Lire dans l'ordre : §0 (pourquoi réseau seul ≠ suffisant) → §2
-      (features d'entrée, à reproduire exactement) → §3 (algorithme de
-      recherche) → **§3bis (bonus territoire/bidoua, ajout juillet 2026 —
-      à ne pas oublier, ne change pas le `.onnx` mais change la formule
-      d'évaluation)** → §4 (profondeur vs budget de temps — **lire avant
+- [ ] Lire **§0bis (minimax + bidoua, ce qu'il faut coder MAINTENANT)** →
+      §3 (algorithme de recherche, alpha-bêta — s'applique tel quel, juste
+      sans le réseau) → §4 (profondeur vs budget de temps — **lire avant
       de choisir une configuration**, source d'une vraie confusion
       pendant le développement).
+- [ ] Le reste (§0, §1, §2, §3bis) ne concerne QUE l'étape réseau
+      ultérieure — pas nécessaire pour l'instant, à lire seulement quand
+      cette étape sera lancée.
 - [ ] En cas de doute sur une formule ou un comportement de règle, le
       code Python de référence est cité à chaque section correspondante
       (fichier + fonction) — c'est la source de vérité en cas d'écart.
 - [ ] Toute question bloquante : contacter Glenn (propriétaire du dépôt),
       pas de canal de support séparé pour l'instant.
 
-## 0. Résumé en une phrase
+## 0bis. Ce qu'il faut coder MAINTENANT : minimax + bidoua (sans réseau)
+
+Un alpha-bêta classique (§3, en ignorant tout ce qui parle du réseau) où
+la fonction d'évaluation de feuille est une formule fixe — pas de modèle
+appris, pas de fichier à charger, juste des règles :
+
+```
+evaluation_minimax(position):                  # profondeur == 0, position non terminee
+    store_diff = mon_magasin - magasin_adverse
+    mon_territoire_sur     = territoire_sur(mes 7 cases de semis)
+    territoire_sur_adverse = territoire_sur(les 7 cases de semis adverses)
+    territoire_diff = mon_territoire_sur - territoire_sur_adverse
+    mobilite = nb_coups_legaux_mien - nb_coups_legaux_adverse
+    retourner store_diff * 10.0 + territoire_diff * 3.0 + mobilite
+
+fonction territoire_sur(cases_du_camp):         # 7 cases d'un joueur (0..6 ou 7..13)
+    retourner somme(c pour c dans cases_du_camp si c >= 5)
+```
+
+`territoire_sur` : le pourquoi du seuil `5` est expliqué en détail au
+§3bis plus bas (une case ne perd jamais de graines sauf quand son
+propriétaire la joue — donc 5+ graines = définitivement à l'abri de la
+capture 2-4). C'est la même logique, juste utilisée seule, sans être
+combinée à un score de réseau.
+
+Position terminale (fin de partie) : utiliser `evaluation_terminale` du
+§3 tel quel (diff ×1000, magasin + territoire restant) — identique que le
+mode soit minimax ou réseau.
+
+**Référence Python exacte** : `packages/songo_ai/search/negamax.py`
+(`default_evaluate`, appelé SANS réseau — c'est exactement cette
+fonction, pas une réécriture). Côté table de jeu Python, ce mode
+correspond à `minimax:<profondeur>:<budget_s>:bidoua` (voir
+`apps/table/src/controllers.py`) — utile pour comparer visuellement
+`minimax:14:5:bidoua` contre `minimax:14:5:baseline` (sans le bonus)
+avant de porter quoi que ce soit, si un doute survient sur le
+comportement attendu.
+
+Ordonnancement des coups (§3, tri par policy réseau) : sans réseau, trier
+simplement par capture immédiate décroissante (nombre de graines
+capturées par le coup), comme le fait la recherche Python par défaut
+quand aucune policy n'est fournie (`_expand_children` dans
+`negamax.py`) — la table de transposition (coup déjà connu comme
+meilleur pour cette position) passe toujours en premier, avant ce tri.
+
+## 0. Résumé en une phrase (etape reseau -- pas la priorite actuelle)
 
 **Le réseau seul est faible. Le réseau + une recherche alpha-beta autour
 est fort.** Il ne suffit pas de charger le modèle et de prendre le coup
@@ -249,6 +312,12 @@ informatif ; ce qui marche aux échecs ne marche pas forcément ici). Ne
 pas les porter.
 
 ## 3bis. Ajout juillet 2026 : le bonus territoire (bidoua/Yinda)
+
+**Cette section décrit la version COMBINÉE AU RÉSEAU** (`lean * 300.0 +
+bonus_territoire`) — pas la priorité actuelle. Si tu codes le minimax
+seul (§0bis, ce qu'il faut coder maintenant), tu as déjà tout ce qu'il
+faut là-bas ; cette section documente juste le contexte/pourquoi (le
+seuil de 5 graines, le raisonnement) pour l'étape réseau ultérieure.
 
 **Contexte** : des joueurs Songo de niveau pro ont fait un retour précis
 sur le comportement du moteur — il joue "glouton" (il fonce sur la
