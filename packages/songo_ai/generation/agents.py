@@ -10,7 +10,7 @@ from __future__ import annotations
 import random
 from typing import Protocol
 
-from songo_ai.search.negamax import SearchLimits, iterative_deepening
+from songo_ai.search.negamax import EvaluateFn, SearchLimits, default_evaluate, iterative_deepening
 from songo_ai.songo.rules import SongoLegacyGame
 
 
@@ -22,15 +22,23 @@ def random_agent(game: SongoLegacyGame, rng: random.Random) -> int:
     return rng.choice(game.legal_local_actions())
 
 
-def make_shallow_search_agent(max_depth: int, max_nodes: int = 20_000, max_time_s: float = 0.5) -> Agent:
+def make_shallow_search_agent(
+    max_depth: int, max_nodes: int = 20_000, max_time_s: float = 0.5, evaluate_fn: EvaluateFn = default_evaluate
+) -> Agent:
     """Fabrique un agent "minimax de niveaux varies" (section 6.2) : plus
     `max_depth` est petit, plus les trajectoires produites ressemblent a un
-    joueur faible/tactique court ; plus il est grand, a un joueur fort."""
+    joueur faible/tactique court ; plus il est grand, a un joueur fort.
+
+    `evaluate_fn` (defaut `default_evaluate`) : parametre expose surtout
+    pour comparer AVEC/SANS le bonus territoire bidoua/Yinda a recherche
+    identique (cf. apps/table/src/controllers.py `minimax:...:baseline`) --
+    la generation de dataset (usage principal de cette fonction) n'a pas
+    besoin d'y toucher, le defaut est le bon reglage."""
 
     limits = SearchLimits(max_depth=max_depth, max_nodes=max_nodes, max_time_s=max_time_s)
 
     def agent(game: SongoLegacyGame, rng: random.Random) -> int:
-        result = iterative_deepening(game.clone_for_search(), limits)
+        result = iterative_deepening(game.clone_for_search(), limits, evaluate_fn)
         return result.local_action
 
     return agent

@@ -14,6 +14,17 @@ from typing import Tuple
 from songo_ai.generation import make_shallow_search_agent, random_agent
 from songo_ai.hybrid import SongoFishConfig, make_songofish_agent
 from songo_ai.model import get_champion, load_model, load_registry
+from songo_ai.search.negamax import default_evaluate
+
+
+def _parse_bidoua_flag(spec: str, parts: list, index: int) -> bool:
+    """Lit le composant optionnel "bidoua"|"baseline" (defaut "bidoua") --
+    partage entre "minimax:" et "songofish:", cf. docstring de
+    `make_controller`."""
+    flag = parts[index] if len(parts) > index else "bidoua"
+    if flag not in ("bidoua", "baseline"):
+        raise ValueError(f"composant bidoua de {spec!r} invalide: {flag!r} (attendu 'bidoua' ou 'baseline')")
+    return flag == "bidoua"
 
 
 def _resolve_model_entry(version: str) -> dict:
@@ -33,27 +44,35 @@ def _load_versioned_model(entry: dict):
 
 
 def make_controller(spec: str):
-    """`spec` : "random" | "minimax:<profondeur>[:max_time_s]" |
+    """`spec` : "random" | "minimax:<profondeur>[:max_time_s[:bidoua|baseline]]" |
     "songofish:<version|champion>[:profondeur[:max_time_s[:bidoua|baseline]]]".
-    Le 5e composant (defaut "bidoua") controle le bonus territoire
-    sur/greniers (cf. hybrid/network_eval.py, correctif juillet 2026) --
-    "baseline" reconstruit le comportement d'avant le correctif, utile
-    uniquement pour comparer les deux a l'oeil sur la table (--player1
-    songofish:champion:14:5:bidoua --player2 songofish:champion:14:5:baseline)."""
+    Le dernier composant optionnel (defaut "bidoua") controle le bonus
+    territoire sur/greniers (cf. search/negamax.py et hybrid/network_eval.py,
+    correctif juillet 2026) -- "baseline" reconstruit le comportement
+    d'avant le correctif, utile uniquement pour comparer les deux a l'oeil
+    sur la table, ex :
+        --player1 minimax:14:5:bidoua --player2 minimax:14:5:baseline
+        --player1 songofish:champion:14:5:bidoua --player2 songofish:champion:14:5:baseline"""
     if spec == "random":
         return random_agent, "Aleatoire"
 
     if spec.startswith("minimax:"):
-        # minimax:<profondeur>[:max_time_s] -- profondeur plafonnee mais le
-        # budget de temps (defaut 2s, cf. STANDARD dans songo_ai.teachers ou
-        # 5s reprend le budget reel du jeu) reste le vrai facteur limitant en
-        # pratique via l'approfondissement iteratif (joue le meilleur coup
-        # trouve si le temps est ecoule avant d'atteindre `profondeur`).
+        # minimax:<profondeur>[:max_time_s[:bidoua|baseline]] -- profondeur
+        # plafonnee mais le budget de temps (defaut 2s, cf. STANDARD dans
+        # songo_ai.teachers ou 5s reprend le budget reel du jeu) reste le
+        # vrai facteur limitant en pratique via l'approfondissement
+        # iteratif (joue le meilleur coup trouve si le temps est ecoule
+        # avant d'atteindre `profondeur`).
         parts = spec.split(":")
         depth = int(parts[1])
         max_time_s = float(parts[2]) if len(parts) > 2 else 2.0
-        agent = make_shallow_search_agent(max_depth=depth, max_nodes=300_000, max_time_s=max_time_s)
-        return agent, f"Minimax profondeur {depth} (max {max_time_s:g}s)"
+        include_bidoua = _parse_bidoua_flag(spec, parts, 3)
+        evaluate_fn = default_evaluate if include_bidoua else (
+            lambda game, perspective: default_evaluate(game, perspective, include_territory_bonus=False)
+        )
+        agent = make_shallow_search_agent(max_depth=depth, max_nodes=300_000, max_time_s=max_time_s, evaluate_fn=evaluate_fn)
+        suffix = "" if include_bidoua else " [sans bidoua]"
+        return agent, f"Minimax profondeur {depth} (max {max_time_s:g}s){suffix}"
 
     if spec.startswith("songofish:"):
         # reseau (ordonnancement + eval feuilles) + recherche alpha-beta bornee
@@ -66,10 +85,7 @@ def make_controller(spec: str):
         version = parts[1]
         depth = int(parts[2]) if len(parts) > 2 else 10
         max_time_s = float(parts[3]) if len(parts) > 3 else 2.0
-        bidoua_flag = parts[4] if len(parts) > 4 else "bidoua"
-        if bidoua_flag not in ("bidoua", "baseline"):
-            raise ValueError(f"5e composant de {spec!r} invalide: {bidoua_flag!r} (attendu 'bidoua' ou 'baseline')")
-        include_bidoua = bidoua_flag == "bidoua"
+        include_bidoua = _parse_bidoua_flag(spec, parts, 4)
         entry = _resolve_model_entry(version)
         model = _load_versioned_model(entry)
         agent = make_songofish_agent(
@@ -80,6 +96,7 @@ def make_controller(spec: str):
         return agent, f"SongoFish v{entry['version']} (profondeur max {depth}, budget {max_time_s:g}s){suffix}"
 
     raise ValueError(
-        f"controleur inconnu: {spec!r} "
-        "(attendu: random | minimax:N | songofish:VERSION[:profondeur[:max_time_s[:bidoua|baseline]]])"
+        f"controleur inconnu: {spec!r} (attendu: random | "
+        "minimax:N[:max_time_s[:bidoua|baseline]] | "
+        "songofish:VERSION[:profondeur[:max_time_s[:bidoua|baseline]]])"
     )
