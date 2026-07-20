@@ -15,11 +15,37 @@ from songo_ai.songo.rules import zobrist_hash
 OPENING = "ouverture"
 MIDGAME = "milieu"
 ENDGAME = "fin"
+# "Gestion des fins" (docs/III. Gestion des fins/) : positions ou peu de
+# graines restent en jeu des deux cotes (ex. combinaisons "6 contre 4",
+# "5 contre 4" alignees). Un classement par ratio de coups joues (ci-dessous)
+# peut manquer ces cas -- une partie peut atteindre un solde de graines tres
+# bas tot (captures agressives) ou au contraire rester chargee tres tard.
+# Le nombre de graines encore en jeu est le bon critere directement, pas un
+# proxy indirect via le numero du coup.
+TIGHT_ENDGAME = "fin_serree"
+TIGHT_ENDGAME_SEED_THRESHOLD = 20
 
-DEFAULT_PHASE_WEIGHTS: Dict[str, float] = {OPENING: 1.0, MIDGAME: 3.0, ENDGAME: 3.0}
+DEFAULT_PHASE_WEIGHTS: Dict[str, float] = {
+    OPENING: 1.0,
+    MIDGAME: 3.0,
+    ENDGAME: 3.0,
+    # Poids nettement plus eleve : ces positions sont rares en auto-jeu
+    # (la plupart des parties gardent plus de 20 graines en jeu jusqu'a
+    # une phase tardive), mais sont exactement celles jugees les plus
+    # importantes et les plus difficiles a bien gerer (section identifiee
+    # via l'audit du manuscrit "Gestion des fins", chapitre explicitement
+    # marque "tres important").
+    TIGHT_ENDGAME: 8.0,
+}
+
+
+def seeds_in_play(position: TrajectoryPosition) -> int:
+    return sum(position.state.board[0:14])
 
 
 def classify_phase(position: TrajectoryPosition) -> str:
+    if seeds_in_play(position) <= TIGHT_ENDGAME_SEED_THRESHOLD:
+        return TIGHT_ENDGAME
     if position.total_moves <= 0:
         return OPENING
     ratio = position.move_number / position.total_moves
