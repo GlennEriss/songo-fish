@@ -2,8 +2,9 @@
 
 Porte de passage (section 13) : TT, ID, ordonnancement et PV fonctionnels.
 L'evaluation de feuille est un heuristique provisoire (difference de
-magasins + mobilite) : elle sera remplacee par la tete WDL du reseau une
-fois l'etape 7 atteinte (section 8.1). Ce module ne depend que de
+magasins + territoire sur/greniers + mobilite) : elle sera remplacee par
+la tete WDL du reseau une fois l'etape 7 atteinte (section 8.1). Ce
+module ne depend que de
 `songo_ai.songo.rules`, seule implementation des regles du projet
 (principe section 12.1).
 
@@ -82,17 +83,47 @@ class SearchResult:
     timed_out: bool = False
 
 
+# Une case adverse ne peut etre capturee que si elle contient 2 a 4
+# graines au moment ou un semis y arrive (regle 2-4, cf. rules.py
+# `_capture`). Une case ne perd jamais de graines sauf quand son
+# proprietaire la joue lui-meme (le semis adverse ne fait qu'en AJOUTER) :
+# une case a 5 graines ou plus ne peut donc plus jamais retomber dans la
+# fourchette 2-4 tant qu'elle n'est pas jouee -- elle est definitivement a
+# l'abri. C'est la definition operationnelle d'un debut de "grenier"/Yinda
+# (livre Owona, chapitre 4 : accumulation patiente pour une capture future
+# bien plus importante). Sans cette notion, l'evaluation intermediaire ne
+# recompensait que les graines DEJA au magasin (`game.score()`) et
+# ignorait ce territoire pourtant deja securise -- ce qui poussait la
+# recherche a toujours prefer une petite capture immediate a la
+# construction d'un grenier, exactement le jeu "glouton, sans strategie"
+# que les joueurs pros exploitent contre le moteur (retour terrain,
+# juillet 2026).
+SAFE_ACCUMULATION_THRESHOLD = 5
+# Poids plus faible que celui du magasin (10.0) : un grenier reste a
+# jouer -- l'adversaire garde la main sur le reste de la partie -- ce
+# n'est pas encore un gain acquis comme une graine deja au magasin.
+SAFE_ACCUMULATION_WEIGHT = 3.0
+
+
+def _safe_territory(board, start: int) -> int:
+    return sum(int(c) for c in board[start : start + 7] if c >= SAFE_ACCUMULATION_THRESHOLD)
+
+
 def default_evaluate(game: SongoLegacyGame, perspective: int) -> float:
-    """Heuristique provisoire : diff. de magasins (poids fort) + mobilite."""
+    """Heuristique provisoire : diff. de magasins (poids fort) + territoire
+    sur/greniers (poids modere) + mobilite."""
     if game.finished:
         score_1, score_2 = game.final_score_with_territory()
         diff = (score_1 - score_2) if perspective == 1 else (score_2 - score_1)
         return diff * 1000.0
 
     store_1, store_2 = game.score()
-    diff = (store_1 - store_2) if perspective == 1 else (store_2 - store_1)
+    store_diff = (store_1 - store_2) if perspective == 1 else (store_2 - store_1)
+    territory_1 = _safe_territory(game.board, 0)
+    territory_2 = _safe_territory(game.board, 7)
+    territory_diff = (territory_1 - territory_2) if perspective == 1 else (territory_2 - territory_1)
     mobility = len(game.legal_moves(perspective)) - len(game.legal_moves(opponent(perspective)))
-    return diff * 10.0 + mobility
+    return store_diff * 10.0 + territory_diff * SAFE_ACCUMULATION_WEIGHT + mobility
 
 
 def _expand_children(

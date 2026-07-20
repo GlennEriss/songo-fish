@@ -43,7 +43,7 @@ from songo_ai.model.network import SongoNet
 from songo_ai.search.negamax import EvaluateFn, PriorityFn, default_evaluate
 from songo_ai.songo.rules import SongoLegacyGame
 
-EVAL_SCALE = 300.0  # meme ordre de grandeur que default_evaluate (diff*10, cf. _WDL_PLACEHOLDER_K)
+EVAL_SCALE = 300.0  # meme ordre de grandeur que default_evaluate (diff*10 + territoire*3, cf. _WDL_PLACEHOLDER_K)
 
 # Purge simple du cache au-dela de cette taille (une partie entiere en
 # consomme une fraction ; la purge complete evite une gestion LRU sans
