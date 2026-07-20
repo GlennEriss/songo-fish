@@ -152,7 +152,34 @@ def test_no_capture_when_arrival_is_first_opponent_pit() -> None:
     game = SongoLegacyGame.from_board(board, PLAYER_ONE)
     result = game.play(5)
     assert result.captured == 0
-    assert game.board[7] == 2
+
+
+def test_capture_cascade_never_empties_opponent_entirely() -> None:
+    # move=5, 8 graines : atterrit en case13 (derniere case adverse), et les
+    # 7 cases adverses (7-13) valent toutes 2 apres semis -- un videment
+    # total serait possible sans la protection. La cascade doit capturer
+    # les 6 dernieres (13..8) et EPARGNER la toute premiere (case7), pas
+    # bloquer toute la capture.
+    board = [0, 0, 0, 0, 0, 8, 0, 1, 1, 1, 1, 1, 1, 1, 0, 0]
+    game = SongoLegacyGame.from_board(board, PLAYER_ONE)
+    result = game.play(5)
+    assert result.captured == 12  # 6 cases x 2 graines, pas 0
+    assert game.board[7] == 2  # case protegee, jamais capturee
+    assert game.board[8] == 0 and game.board[13] == 0  # le reste de la cascade est bien capture
+    assert game.board[P1_STORE] == 12
+    assert game.last_capture_trace == [13, 12, 11, 10, 9, 8]
+
+
+def test_capture_cascade_never_empties_opponent_entirely_mirror_side() -> None:
+    # Meme situation, cote miroir : P2 joue, cascade vers le camp P1,
+    # case0 doit etre epargnee.
+    board = [1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 8, 0, 0, 0]
+    game = SongoLegacyGame.from_board(board, PLAYER_TWO)
+    result = game.play(12)
+    assert result.captured == 12
+    assert game.board[0] == 2  # case protegee
+    assert game.board[1] == 0 and game.board[6] == 0
+    assert game.board[P2_STORE] == 12
 
 
 def test_finish_when_current_player_has_no_seeds_on_own_side() -> None:

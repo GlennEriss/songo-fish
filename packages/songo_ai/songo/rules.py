@@ -373,12 +373,23 @@ class SongoLegacyGame:
         if arrival in (0, 7):
             return 0
 
+        # Protection contre le videment total : si TOUTES les cases
+        # adverses sont deja capturables (2-4 graines chacune) et que
+        # l'arrivee est la derniere case du camp adverse (6 ou 13), la
+        # cascade capturerait les 7 cases d'un coup -- une capture ne peut
+        # jamais vider entierement l'adversaire (case 7 a case 1 chez lui).
+        # On protege alors la toute derniere case atteinte par la cascade
+        # (celle qui completerait le videment total) ; le reste de la
+        # cascade capture normalement, jusqu'a s'arreter juste avant elle.
+        protected_pit = None
         if arrival in (6, 13) and self.can_capture_all_opponent(move):
-            return 0
+            protected_pit = 0 if move >= 7 else 7
 
         captured = 0
         current = arrival
         while (current != -1 and move >= 7) or (current != 6 and move < 7):
+            if current == protected_pit:
+                break
             seeds = self.board[current]
             if seeds <= 1 or seeds > 4:
                 break
