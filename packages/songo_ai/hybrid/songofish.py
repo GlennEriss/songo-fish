@@ -38,6 +38,12 @@ class SongoFishConfig:
     # prolonge les sequences de recoltes aux feuilles pour ne jamais
     # evaluer une position en pleine cascade de captures.
     quiescence_depth: int = 4
+    # Bonus territoire sur/greniers (bidoua/Yinda, cf. network_eval.py) --
+    # actif par defaut (le bon reglage pour jouer). `False` reconstruit le
+    # comportement d'avant le correctif (juillet 2026), utile uniquement
+    # pour comparer les deux en tournoi/table (cf. controllers.py
+    # `songofish:...:baseline`).
+    include_bidoua: bool = True
 
 
 def make_songofish_agent(model: SongoNet, config: Optional[SongoFishConfig] = None):
@@ -49,7 +55,7 @@ def make_songofish_agent(model: SongoNet, config: Optional[SongoFishConfig] = No
     # unique = un seul passage avant, quel que soit le nombre de fois ou
     # la recherche la revisite (transpositions).
     cache = NetworkCache(model)
-    evaluate_fn = make_network_evaluate(model, cache)
+    evaluate_fn = make_network_evaluate(model, cache, include_territory_bonus=cfg.include_bidoua)
     priority_fn = make_network_priority(model, cache)
     limits = SearchLimits(
         max_depth=cfg.max_depth,

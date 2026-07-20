@@ -20,8 +20,9 @@ RULES_VERSION = "songo-python-v1"
 DATASET_VERSION = "v001"
 
 # Echelle provisoire de calibration score -> WDL (section 6.5). Nos scores
-# internes sont en unites "diff. de magasins x10 + mobilite" (cf.
-# songo_ai.search.negamax.default_evaluate) ; k est choisi pour qu'une
+# internes sont en unites "diff. de magasins x10 + territoire sur x3 +
+# mobilite" (cf. songo_ai.search.negamax.default_evaluate) ; k est choisi
+# pour qu'une
 # difference de quelques graines produise une inclinaison moderee, pas
 # saturee. A recalibrer sur un corpus de resultats reels des que possible.
 _WDL_PLACEHOLDER_K = 300.0

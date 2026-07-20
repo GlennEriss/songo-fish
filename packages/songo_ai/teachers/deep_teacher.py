@@ -14,6 +14,18 @@ en approfondissement iteratif (moins couteux qu'un vrai calcul de marge
 top1/top2 a chaque profondeur), distinct du champ `top1_top2_margin` de
 l'annotation, qui lui n'est calcule que pour les niveaux enrichi/premium
 (section 5.4) en evaluant explicitement les autres coups racine.
+
+Bidoua/Yinda (territoire sur/greniers, juillet 2026) : aucun des deux
+appels a `negamax_search` ci-dessous ne passe `evaluate_fn` -- ils
+recoivent donc deliberement le defaut du module (`default_evaluate`,
+territoire-aware depuis le correctif). Le professeur enseigne donc deja
+le bidoua a chaque position ou sa propre recherche bute sur son horizon
+avant d'atteindre la capture reelle, sans code supplementaire. A
+preserver : si `evaluate_fn` est un jour rendu configurable ici, le
+defaut doit rester `default_evaluate` (pas un retour a l'ancienne
+heuristique magasin-seul), sous peine de degrader la qualite des futurs
+datasets sans avertissement visible (l'annotation reste "valide" au sens
+du schema, juste moins bonne strategiquement).
 """
 
 from __future__ import annotations

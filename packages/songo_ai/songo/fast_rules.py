@@ -229,12 +229,18 @@ def capture(board: np.ndarray, move: int, arrival: int) -> int:
     if arrival == 0 or arrival == 7:
         return 0
 
+    # Protection contre le videment total (cf. songo.rules._capture pour
+    # le detail) : on protege la derniere case de la cascade plutot que de
+    # bloquer toute la capture.
+    protected_pit = -2  # aucune valeur de `current` ne vaut jamais -2
     if (arrival == 6 or arrival == 13) and _can_capture_all_opponent(board, move):
-        return 0
+        protected_pit = 0 if move >= 7 else 7
 
     captured = 0
     current = arrival
     while (current != -1 and move >= 7) or (current != 6 and move < 7):
+        if current == protected_pit:
+            break
         seeds = board[current]
         if seeds <= 1 or seeds > 4:
             break

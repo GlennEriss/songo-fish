@@ -2,12 +2,24 @@
 entraine (section 8.1), pour brancher dans songo_ai.search.negamax sans
 dupliquer la recherche.
 
-- Evaluation de feuille : tete WDL (win - loss), a la meme echelle que
-  l'heuristique provisoire qu'elle remplace (songo_ai.search.negamax.
-  default_evaluate = diff. magasins x10 + mobilite -- cf. EVAL_SCALE).
+- Evaluation de feuille : tete WDL (win - loss) + bonus territoire sur
+  (greniers/Yinda, cf. songo_ai.search.negamax.safe_territory), a la meme
+  echelle que l'heuristique provisoire qu'elle remplace (default_evaluate
+  = diff. magasins x10 + territoire*3 + mobilite -- cf. EVAL_SCALE). Le
+  bonus territoire est ajoute explicitement ici (pas seulement laisse a la
+  charge du reseau) car le champion actuel (v0.2.0) a ete entraine sur des
+  labels generes AVANT le correctif bidoua/Yinda (juillet 2026, retour de
+  joueurs pros : le moteur jouait "glouton", sans construire de grenier) --
+  sa tete WDL n'a donc pas encore appris cette notion elle-meme. Ce bonus
+  explicite comble l'ecart immediatement, sans attendre une regeneration
+  de dataset + reentrainement. A retirer (ou reduire) une fois qu'une
+  future version du reseau, entrainee sur des labels post-correctif,
+  demontre qu'elle l'a interiorise (mesurable par tournoi, cf.
+  songo_ai.evaluation.play_match).
   Les positions terminales restent evaluees par default_evaluate telles
-  quelles (diff x1000) : leur magnitude doit toujours dominer l'evaluation
-  du reseau, qui elle ne s'applique qu'aux feuilles non terminales.
+  quelles (diff x1000, deja territoire-aware via final_score_with_territory) :
+  leur magnitude doit toujours dominer l'evaluation du reseau, qui elle ne
+  s'applique qu'aux feuilles non terminales.
 - Ordonnancement : tete policy, pour explorer les coups les plus
   prometteurs en premier (meilleures coupures alpha-beta).
 
@@ -40,10 +52,10 @@ import torch
 from songo_ai.dataset.schema import canonicalize_board
 from songo_ai.model.features import observation_features
 from songo_ai.model.network import SongoNet
-from songo_ai.search.negamax import EvaluateFn, PriorityFn, default_evaluate
-from songo_ai.songo.rules import SongoLegacyGame
+from songo_ai.search.negamax import SAFE_ACCUMULATION_WEIGHT, EvaluateFn, PriorityFn, default_evaluate, safe_territory
+from songo_ai.songo.rules import SongoLegacyGame, opponent, side_range
 
-EVAL_SCALE = 300.0  # meme ordre de grandeur que default_evaluate (diff*10, cf. _WDL_PLACEHOLDER_K)
+EVAL_SCALE = 300.0  # meme ordre de grandeur que default_evaluate (diff*10 + territoire*3, cf. _WDL_PLACEHOLDER_K)
 
 # Purge simple du cache au-dela de cette taille (une partie entiere en
 # consomme une fraction ; la purge complete evite une gestion LRU sans
@@ -87,7 +99,16 @@ class NetworkCache:
         return hit
 
 
-def make_network_evaluate(model: SongoNet, cache: NetworkCache | None = None) -> EvaluateFn:
+def make_network_evaluate(
+    model: SongoNet, cache: NetworkCache | None = None, include_territory_bonus: bool = True
+) -> EvaluateFn:
+    """`include_territory_bonus=False` reconstruit le comportement du
+    reseau AVANT le correctif bidoua/Yinda (juillet 2026) -- reseau seul,
+    sans le bonus territoire. N'existe que pour permettre une comparaison
+    directe AVEC vs SANS a modele/recherche identiques (cf.
+    apps/trainer/scripts/match_bidoua_vs_baseline.py, apps/table/src/
+    controllers.py `songofish:...:baseline`) ; ne pas utiliser `False`
+    ailleurs, le comportement par defaut (`True`) est le bon pour jouer."""
     net_cache = cache if cache is not None else NetworkCache(model)
 
     def evaluate(game: SongoLegacyGame, perspective: int) -> float:
@@ -100,9 +121,15 @@ def make_network_evaluate(model: SongoNet, cache: NetworkCache | None = None) ->
         # win/draw/loss, du point de vue du joueur au trait (canonicalize_board) ;
         # en negamax, perspective == game.turn a ce point (convention respectee
         # par negamax_search/iterative_deepening), donc "lean" est deja du point
-        # de vue de `perspective`.
+        # de vue de `perspective`. Meme invariant reutilise ci-dessous pour le
+        # bonus territoire : "mon" cote est celui de `perspective`.
         _, lean = net_cache.outputs(game)
-        return lean * EVAL_SCALE
+        if not include_territory_bonus:
+            return lean * EVAL_SCALE
+        own_start, _ = side_range(perspective)
+        opp_start, _ = side_range(opponent(perspective))
+        territory_diff = safe_territory(game.board, own_start) - safe_territory(game.board, opp_start)
+        return lean * EVAL_SCALE + territory_diff * SAFE_ACCUMULATION_WEIGHT
 
     return evaluate
 

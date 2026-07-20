@@ -3,10 +3,12 @@ reproductibles, cache operationnel)."""
 
 from __future__ import annotations
 
+import inspect
 from pathlib import Path
 
 import pytest
 
+from songo_ai.search.negamax import default_evaluate, negamax_search
 from songo_ai.songo.rules import PLAYER_ONE, SongoLegacyGame
 from songo_ai.teachers import ENRICHI, STANDARD, AnnotationCache, DeepTeacher, TeacherConfig
 
@@ -15,6 +17,17 @@ def _small_config(**overrides) -> TeacherConfig:
     base = dict(initial_depth=2, depth_step=2, max_depth=8, max_nodes=100_000, max_time_s=3.0, stability_window=2, min_margin=5.0)
     base.update(overrides)
     return TeacherConfig(**base)
+
+
+def test_teacher_never_overrides_the_territory_aware_default_evaluate() -> None:
+    # Garde-fou (juillet 2026, cf. l'en-tete de deep_teacher.py) : le
+    # professeur ne passe jamais `evaluate_fn` a `negamax_search` -- il
+    # depend donc entierement du defaut du module pour "enseigner" le
+    # bidoua/Yinda (territoire sur/greniers). Si ce defaut change un jour
+    # pour autre chose que `default_evaluate`, ce test doit echouer plutot
+    # que de laisser la regression passer inapercue.
+    sig = inspect.signature(negamax_search)
+    assert sig.parameters["evaluate_fn"].default is default_evaluate
 
 
 def test_annotate_returns_legal_best_action() -> None:
