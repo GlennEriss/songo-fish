@@ -115,9 +115,16 @@ def safe_territory(board, start: int) -> int:
     return sum(int(c) for c in board[start : start + 7] if c >= SAFE_ACCUMULATION_THRESHOLD)
 
 
-def default_evaluate(game: SongoLegacyGame, perspective: int) -> float:
+def default_evaluate(game: SongoLegacyGame, perspective: int, include_territory_bonus: bool = True) -> float:
     """Heuristique provisoire : diff. de magasins (poids fort) + territoire
-    sur/greniers (poids modere) + mobilite."""
+    sur/greniers (poids modere, cf. `include_territory_bonus`) + mobilite.
+
+    `include_territory_bonus=False` reconstruit le comportement d'avant le
+    correctif bidoua/Yinda (juillet 2026) -- n'existe que pour permettre
+    une comparaison directe AVEC vs SANS a recherche identique (cf.
+    apps/table/src/controllers.py `minimax:...:baseline`,
+    apps/trainer/scripts/match_bidoua_vs_baseline.py) ; le defaut (`True`)
+    reste le bon reglage pour jouer."""
     if game.finished:
         score_1, score_2 = game.final_score_with_territory()
         diff = (score_1 - score_2) if perspective == 1 else (score_2 - score_1)
@@ -125,10 +132,12 @@ def default_evaluate(game: SongoLegacyGame, perspective: int) -> float:
 
     store_1, store_2 = game.score()
     store_diff = (store_1 - store_2) if perspective == 1 else (store_2 - store_1)
+    mobility = len(game.legal_moves(perspective)) - len(game.legal_moves(opponent(perspective)))
+    if not include_territory_bonus:
+        return store_diff * 10.0 + mobility
     territory_1 = safe_territory(game.board, 0)
     territory_2 = safe_territory(game.board, 7)
     territory_diff = (territory_1 - territory_2) if perspective == 1 else (territory_2 - territory_1)
-    mobility = len(game.legal_moves(perspective)) - len(game.legal_moves(opponent(perspective)))
     return store_diff * 10.0 + territory_diff * SAFE_ACCUMULATION_WEIGHT + mobility
 
 

@@ -51,7 +51,39 @@ directement sur le plateau.
 `packages/songo_ai/evaluation/tournament.py`) : la version avec le bonus
 territoire gagne 43 parties sur 60 contre la version sans (3 nulles),
 IC95% [61,9%-83,5%] — effet réel, pas du bruit statistique sur un petit
-échantillon.
+échantillon. C'est le seul niveau (minimax pur, sans réseau) où l'effet a
+été mesuré avec cette rigueur pour l'instant ; la combinaison
+réseau+bidoua (`make_network_evaluate`) existe et fonctionne, mais son
+effet propre n'a pas encore été confirmé par un tournoi de taille
+comparable — un seul match observé à la table a même tourné en faveur de
+la version sans bonus, ce qui est attendu sur un échantillon de 1 partie
+mais pas encore tranché.
 
-**Portage C#** : voir `docs/integration_csharp_model_recherche.md` §3bis
-pour la formule exacte à répliquer côté moteur de jeu.
+**Ce que le prof (DeepTeacher) fait de tout ça, précisément** : il ne
+"préfère" pas le bidoua par une règle imposée — il explore par recherche
+exacte (alpha-bêta) et ne recourt à l'heuristique territoire que là où
+son calcul s'arrête (horizon de profondeur/temps/nœuds atteint sans avoir
+résolu la séquence). Tant qu'il peut calculer une séquence jusqu'au bout,
+il compare des résultats réels, pas des estimations — si la capture
+immédiate est vraiment meilleure dans une position donnée, il la trouve
+et la joue quand même. Le bonus ne fait que rendre son estimation de
+repli moins biaisée à l'endroit précis où il doit deviner. Limite
+assumée : l'estimation reste un seuil uniforme (5+ graines = +3, peu
+importe le contexte), elle ne vérifie pas les trois conditions du livre
+pour un "bon" grenier (provision en amont, pas de Yinda adverse, pas de
+réplique adverse) — piste d'amélioration identifiée, pas encore faite.
+
+**Toggle AVEC/SANS bidoua** (pour comparer, jamais pour jouer en
+pratique — le défaut `True` reste le bon réglage) : `default_evaluate(...,
+include_territory_bonus=False)` et `make_network_evaluate(...,
+include_territory_bonus=False)` reconstruisent le comportement d'avant le
+correctif. Exposé sur la table pygame via le composant optionnel
+`:bidoua|baseline` sur `minimax:` et `songofish:` (voir
+`apps/table/src/controllers.py`), et par
+`apps/trainer/scripts/match_bidoua_vs_baseline.py` en tournoi headless.
+
+**Portage C#** : priorité actuelle = **minimax + bidoua, sans réseau**
+(plus simple à porter, et c'est la version dont l'effet est le mieux
+validé) — voir `docs/integration_csharp_model_recherche.md` §0bis.
+L'intégration réseau+bidoua (§3bis du même document) reste documentée
+pour une étape ultérieure, une fois son effet propre confirmé.
