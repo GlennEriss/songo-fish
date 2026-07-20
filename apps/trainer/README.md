@@ -1,7 +1,15 @@
 # trainer
 
-Génération de dataset, entraînement du réseau, orchestration GCP. Consomme
-`packages/songo_ai`.
+Génération de dataset, entraînement du réseau, orchestration GCP + Google
+Colab. Consomme `packages/songo_ai`.
+
+**Deux providers de calcul, deux rôles distincts** (juillet 2026) :
+- **GCP Compute Engine** : génération/annotation de dataset (le professeur
+  tourne longtemps, CPU-bound, embarrassingly parallel — voir `build_100k_gcp.py`)
+- **Google Colab** : entraînement du réseau (voir `colab_train.ipynb`).
+  Datasets et checkpoints vivent sur **Google Drive** (pas sur Colab
+  lui-même, éphémère), pas sur GCP — évite de garder une VM/un bucket GCP
+  payant en continu pour un entraînement qui ne prend que quelques minutes.
 
 ## Scripts
 
@@ -61,6 +69,14 @@ manifest = train_and_register(
 from songo_ai.model import promote_version
 promote_version("0.2.0")
 ```
+
+## Entraîner sur Google Colab
+
+`colab_train.ipynb` : monte Google Drive (dossier `SongoFish/` partagé au
+préalable), clone le dépôt, entraîne, tourne le tournoi vs champion actuel
+— tout sur Drive, rien sur GCP. Uploader ce notebook sur Colab (ou
+`File > Open notebook > GitHub` en pointant sur ce dépôt) et l'exécuter
+cellule par cellule.
 
 ## Lancer un job GCP
 
