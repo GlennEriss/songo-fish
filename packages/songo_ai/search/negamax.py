@@ -105,7 +105,13 @@ SAFE_ACCUMULATION_THRESHOLD = 5
 SAFE_ACCUMULATION_WEIGHT = 3.0
 
 
-def _safe_territory(board, start: int) -> int:
+def safe_territory(board, start: int) -> int:
+    """Somme des graines des cases du camp commencant a `start` (0 pour P1,
+    7 pour P2) qui sont a 5+ graines, donc definitivement hors de portee de
+    la capture 2-4 (cf. commentaire ci-dessus). Public : reutilise par
+    `songo_ai.hybrid.network_eval` pour injecter le meme bonus territoire
+    dans l'evaluation reseau (le reseau champion actuel ne l'a pas appris
+    lui-meme, cf. juillet 2026)."""
     return sum(int(c) for c in board[start : start + 7] if c >= SAFE_ACCUMULATION_THRESHOLD)
 
 
@@ -119,8 +125,8 @@ def default_evaluate(game: SongoLegacyGame, perspective: int) -> float:
 
     store_1, store_2 = game.score()
     store_diff = (store_1 - store_2) if perspective == 1 else (store_2 - store_1)
-    territory_1 = _safe_territory(game.board, 0)
-    territory_2 = _safe_territory(game.board, 7)
+    territory_1 = safe_territory(game.board, 0)
+    territory_2 = safe_territory(game.board, 7)
     territory_diff = (territory_1 - territory_2) if perspective == 1 else (territory_2 - territory_1)
     mobility = len(game.legal_moves(perspective)) - len(game.legal_moves(opponent(perspective)))
     return store_diff * 10.0 + territory_diff * SAFE_ACCUMULATION_WEIGHT + mobility

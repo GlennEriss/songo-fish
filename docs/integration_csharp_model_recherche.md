@@ -18,9 +18,11 @@ développement : profondeur de recherche ≠ temps de réflexion.**
 - [ ] Ajouter `Microsoft.ML.OnnxRuntime` au projet C# (NuGet).
 - [ ] Lire dans l'ordre : §0 (pourquoi réseau seul ≠ suffisant) → §2
       (features d'entrée, à reproduire exactement) → §3 (algorithme de
-      recherche) → §4 (profondeur vs budget de temps — **lire avant de
-      choisir une configuration**, source d'une vraie confusion pendant
-      le développement).
+      recherche) → **§3bis (bonus territoire/bidoua, ajout juillet 2026 —
+      à ne pas oublier, ne change pas le `.onnx` mais change la formule
+      d'évaluation)** → §4 (profondeur vs budget de temps — **lire avant
+      de choisir une configuration**, source d'une vraie confusion
+      pendant le développement).
 - [ ] En cas de doute sur une formule ou un comportement de règle, le
       code Python de référence est cité à chaque section correspondante
       (fichier + fonction) — c'est la source de vérité en cas d'écart.
@@ -177,9 +179,11 @@ pour la référence Python exacte si un doute survient à l'implémentation.
 - **Évaluation d'une position (utilisée par la recherche, cf. §3)** :
   `softmax(wdl_logits)` → `(p_victoire, p_nul, p_défaite)`, puis
   `lean = p_victoire - p_défaite` (dans `[-1, 1]`), et enfin
-  `score = lean * 300.0` — l'échelle 300 est choisie pour rester dans le
-  même ordre de grandeur que l'heuristique de secours (différence de
-  graines × 10), voir §3.
+  `score = lean * 300.0 + bonus_territoire` — l'échelle 300 est choisie
+  pour rester dans le même ordre de grandeur que l'heuristique de secours
+  (différence de graines × 10), voir §3. **`bonus_territoire` est décrit
+  au §3bis (ajout de juillet 2026, à ne pas oublier lors du portage) : ne
+  pas se contenter de `lean * 300.0` seul.**
 
 ## 3. La recherche (ce qui rend le réseau fort)
 
@@ -243,6 +247,70 @@ heuristic — testés côté Python, ils dégradaient l'élagage de ~26% au
 Songo (7 coups possibles seulement, le tri par policy est déjà très
 informatif ; ce qui marche aux échecs ne marche pas forcément ici). Ne
 pas les porter.
+
+## 3bis. Ajout juillet 2026 : le bonus territoire (bidoua/Yinda)
+
+**Contexte** : des joueurs Songo de niveau pro ont fait un retour précis
+sur le comportement du moteur — il joue "glouton" (il fonce sur la
+meilleure capture immédiate disponible) au lieu de construire une
+accumulation patiente dans une case ("grenier"/Yinda, terminologie du
+livre de référence *Le jeu de Songo*, S. Mbarga Owona) pour une capture
+future beaucoup plus importante. C'est précisément la stratégie que les
+pros utilisent pour battre le moteur.
+
+**Diagnostic** : le réseau `model_v0.2.0.onnx` a été entraîné sur des
+données générées **avant** ce correctif — sa tête WDL n'a donc pas encore
+appris elle-même à valoriser un grenier en construction. Plutôt
+qu'attendre une régénération complète du dataset + un réentraînement
+(gros effort), on ajoute un **bonus explicite, calculé directement sur le
+plateau**, en plus du score du réseau — ça ne touche ni l'architecture ni
+les poids du `.onnx`, seulement la formule d'évaluation côté recherche.
+
+**Pourquoi 5 graines est le bon seuil** : une case ne perd jamais de
+graines sauf quand son propriétaire la joue lui-même — un semis adverse
+qui y arrive ne fait qu'**ajouter** une graine, jamais en retirer. Et la
+règle de capture ne s'applique qu'aux cases contenant **2 à 4 graines**
+au moment de l'arrivée. Donc une case qui atteint **5 graines ou plus ne
+peut plus jamais retomber dans la fourchette 2-4** tant qu'elle n'est pas
+jouée : elle est *définitivement* à l'abri de la capture. C'est le début
+opérationnel d'un grenier/Yinda, et c'est un fait vérifiable directement
+sur le plateau, pas une heuristique floue.
+
+**Formule à ajouter dans `evaluation_reseau(position)`** (remplace le
+`score = lean * 300.0` du §2.2/§3) :
+
+```
+fonction territoire_sur(cases_du_camp):       # 7 cases d'un joueur (0..6 ou 7..13)
+    retourner somme(c pour c dans cases_du_camp si c >= 5)
+
+fonction evaluation_reseau(position):          # profondeur == 0, position non terminee
+    lean = softmax(wdl_logits)[victoire] - softmax(wdl_logits)[defaite]
+    mon_territoire_sur     = territoire_sur(mes 7 cases de semis)
+    territoire_sur_adverse = territoire_sur(les 7 cases de semis adverses)
+    bonus_territoire = (mon_territoire_sur - territoire_sur_adverse) * 3.0
+    retourner lean * 300.0 + bonus_territoire
+```
+
+Poids `3.0` choisi délibérément plus faible que le poids `10.0` du
+magasin dans l'heuristique de secours (§3, `evaluation_terminale`) : un
+grenier reste un gain potentiel, pas encore acquis — l'adversaire garde
+la main sur le reste de la partie. C'est un premier réglage raisonnable,
+pas calibré finement ; vérifié en tournoi côté Python (recherche pure,
+sans réseau, même profondeur) : la version avec ce bonus gagne 43 parties
+sur 60 contre la version sans (IC95% 61,9%-83,5%), donc l'effet est réel
+et pas du bruit statistique, mais rien n'interdit de le retoucher si
+l'expérience en jeu réel suggère un autre réglage.
+
+**Référence Python exacte** : `packages/songo_ai/search/negamax.py`
+(`safe_territory`, `SAFE_ACCUMULATION_THRESHOLD = 5`,
+`SAFE_ACCUMULATION_WEIGHT = 3.0`, utilisés à la fois par l'heuristique de
+secours `default_evaluate` et par l'évaluation réseau dans
+`packages/songo_ai/hybrid/network_eval.py::make_network_evaluate`).
+
+**Ce qui NE change PAS** : `evaluation_terminale` (position de fin de
+partie) compte déjà tout le territoire restant comme acquis (magasin +
+tout ce qui reste sur le plateau, cf. §3) — ce bonus ne s'applique qu'aux
+feuilles **non terminales**, exactement comme le score du réseau lui-même.
 
 ## 4. LE POINT CRITIQUE : profondeur vs budget de temps
 
