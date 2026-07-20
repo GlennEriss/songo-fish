@@ -99,7 +99,16 @@ class NetworkCache:
         return hit
 
 
-def make_network_evaluate(model: SongoNet, cache: NetworkCache | None = None) -> EvaluateFn:
+def make_network_evaluate(
+    model: SongoNet, cache: NetworkCache | None = None, include_territory_bonus: bool = True
+) -> EvaluateFn:
+    """`include_territory_bonus=False` reconstruit le comportement du
+    reseau AVANT le correctif bidoua/Yinda (juillet 2026) -- reseau seul,
+    sans le bonus territoire. N'existe que pour permettre une comparaison
+    directe AVEC vs SANS a modele/recherche identiques (cf.
+    apps/trainer/scripts/match_bidoua_vs_baseline.py, apps/table/src/
+    controllers.py `songofish:...:baseline`) ; ne pas utiliser `False`
+    ailleurs, le comportement par defaut (`True`) est le bon pour jouer."""
     net_cache = cache if cache is not None else NetworkCache(model)
 
     def evaluate(game: SongoLegacyGame, perspective: int) -> float:
@@ -115,6 +124,8 @@ def make_network_evaluate(model: SongoNet, cache: NetworkCache | None = None) ->
         # de vue de `perspective`. Meme invariant reutilise ci-dessous pour le
         # bonus territoire : "mon" cote est celui de `perspective`.
         _, lean = net_cache.outputs(game)
+        if not include_territory_bonus:
+            return lean * EVAL_SCALE
         own_start, _ = side_range(perspective)
         opp_start, _ = side_range(opponent(perspective))
         territory_diff = safe_territory(game.board, own_start) - safe_territory(game.board, opp_start)

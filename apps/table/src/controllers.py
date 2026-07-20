@@ -33,7 +33,13 @@ def _load_versioned_model(entry: dict):
 
 
 def make_controller(spec: str):
-    """`spec` : "random" | "minimax:<profondeur>[:max_time_s]" | "songofish:<version|champion>[:profondeur[:max_time_s]]"."""
+    """`spec` : "random" | "minimax:<profondeur>[:max_time_s]" |
+    "songofish:<version|champion>[:profondeur[:max_time_s[:bidoua|baseline]]]".
+    Le 5e composant (defaut "bidoua") controle le bonus territoire
+    sur/greniers (cf. hybrid/network_eval.py, correctif juillet 2026) --
+    "baseline" reconstruit le comportement d'avant le correctif, utile
+    uniquement pour comparer les deux a l'oeil sur la table (--player1
+    songofish:champion:14:5:bidoua --player2 songofish:champion:14:5:baseline)."""
     if spec == "random":
         return random_agent, "Aleatoire"
 
@@ -60,13 +66,20 @@ def make_controller(spec: str):
         version = parts[1]
         depth = int(parts[2]) if len(parts) > 2 else 10
         max_time_s = float(parts[3]) if len(parts) > 3 else 2.0
+        bidoua_flag = parts[4] if len(parts) > 4 else "bidoua"
+        if bidoua_flag not in ("bidoua", "baseline"):
+            raise ValueError(f"5e composant de {spec!r} invalide: {bidoua_flag!r} (attendu 'bidoua' ou 'baseline')")
+        include_bidoua = bidoua_flag == "bidoua"
         entry = _resolve_model_entry(version)
         model = _load_versioned_model(entry)
         agent = make_songofish_agent(
-            model, SongoFishConfig(max_depth=depth, max_nodes=300_000, max_time_s=max_time_s)
+            model,
+            SongoFishConfig(max_depth=depth, max_nodes=300_000, max_time_s=max_time_s, include_bidoua=include_bidoua),
         )
-        return agent, f"SongoFish v{entry['version']} (profondeur max {depth}, budget {max_time_s:g}s)"
+        suffix = "" if include_bidoua else " [sans bidoua]"
+        return agent, f"SongoFish v{entry['version']} (profondeur max {depth}, budget {max_time_s:g}s){suffix}"
 
     raise ValueError(
-        f"controleur inconnu: {spec!r} (attendu: random | minimax:N | songofish:VERSION[:profondeur[:max_time_s]])"
+        f"controleur inconnu: {spec!r} "
+        "(attendu: random | minimax:N | songofish:VERSION[:profondeur[:max_time_s[:bidoua|baseline]]])"
     )

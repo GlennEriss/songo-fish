@@ -21,15 +21,12 @@ de lancer un lot complet en tache de fond.
 from __future__ import annotations
 
 import argparse
-import random
 import time
 
 from songo_ai.evaluation import play_match
-from songo_ai.hybrid.network_eval import EVAL_SCALE, NetworkCache, make_network_evaluate, make_network_priority
+from songo_ai.hybrid import SongoFishConfig, make_songofish_agent
 from songo_ai.model import get_champion, load_model, load_registry
-from songo_ai.search.negamax import SearchLimits, default_evaluate, iterative_deepening
-from songo_ai.songo.fast_rules import FastSongoGame, warmup
-from songo_ai.songo.rules import SongoLegacyGame
+from songo_ai.songo.fast_rules import warmup
 
 
 def _load(version: str):
@@ -42,30 +39,6 @@ def _load(version: str):
         width=entry["architecture"].get("width", 128),
         num_blocks=entry["architecture"].get("num_blocks", 3),
     )
-
-
-def _make_baseline_evaluate(cache: NetworkCache):
-    """Reseau seul, sans bonus territoire -- comportement de
-    make_network_evaluate() AVANT le correctif bidoua (juillet 2026)."""
-
-    def evaluate(game, perspective: int) -> float:
-        if game.finished:
-            return default_evaluate(game, perspective)
-        _, lean = cache.outputs(game)
-        return lean * EVAL_SCALE
-
-    return evaluate
-
-
-def _make_agent(model, evaluate_fn, max_depth: int, max_time_s: float, priority_fn):
-    limits = SearchLimits(max_depth=max_depth, max_nodes=2_000_000, max_time_s=max_time_s, quiescence_depth=4)
-
-    def agent(game: SongoLegacyGame, rng: random.Random) -> int:
-        fast_game = FastSongoGame.from_board(game.board, game.turn)
-        result = iterative_deepening(fast_game.clone_for_search(), limits, evaluate_fn, priority_fn)
-        return result.local_action
-
-    return agent
 
 
 def main() -> None:
@@ -81,23 +54,14 @@ def main() -> None:
     warmup()
     model = _load(args.version)
 
-    cache_bidoua = NetworkCache(model)
-    agent_bidoua = _make_agent(
-        model,
-        make_network_evaluate(model, cache_bidoua),
-        args.depth,
-        args.time_s,
-        make_network_priority(model, cache_bidoua),
-    )
+    def _agent(include_bidoua: bool):
+        config = SongoFishConfig(
+            max_depth=args.depth, max_nodes=2_000_000, max_time_s=args.time_s, include_bidoua=include_bidoua
+        )
+        return make_songofish_agent(model, config)
 
-    cache_baseline = NetworkCache(model)
-    agent_baseline = _make_agent(
-        model,
-        _make_baseline_evaluate(cache_baseline),
-        args.depth,
-        args.time_s,
-        make_network_priority(model, cache_baseline),
-    )
+    agent_bidoua = _agent(include_bidoua=True)
+    agent_baseline = _agent(include_bidoua=False)
 
     print(f"model={args.version} depth<={args.depth} time_s={args.time_s} games={args.games}")
     start = time.perf_counter()
