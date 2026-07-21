@@ -9,11 +9,12 @@ __pycache__/
 # destines a Cloud Storage (section 11.1 du plan), pas au depot git.
 data/
 
-# Conserver dans Git uniquement le dataset humain nettoye et reproductible.
-# Les exports Firebase bruts et les autres artefacts de apps/data restent ignores.
-!apps/data/
-apps/data/*
-!apps/data/ordonnées/
-apps/data/ordonnées/*
-!apps/data/ordonnées/match_moves_v1.json
-!apps/data/ordonnées/match_moves_v1.jsonl
+# Exception : conserver dans Git le dataset de VRAIES parties humaines,
+# petit, nettoye et reproductible (source precieuse, pas un artefact
+# regenerable a la volee). Deplace depuis apps/data/ordonnées vers
+# data/real_matches (juillet 2026). Les exports Firebase bruts
+# (data/real_matches/brutes/, PII) et tout le reste de data/ restent ignores.
+!data/real_matches/
+data/real_matches/*
+!data/real_matches/match_moves_v1.json
+!data/real_matches/match_moves_v1.jsonl
