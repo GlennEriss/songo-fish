@@ -77,11 +77,18 @@ def _annotate_payload(payload: Tuple[Tuple[int, ...], str, int, TeacherConfig, s
     return annotation, trajectory_id, move_number
 
 
-def _load_split(path: Path, limit: int | None) -> List[dict]:
+def _load_split(path: Path, shard_index: int, num_shards: int, limit: int | None) -> List[dict]:
     if not path.exists():
         return []
     rows = [json.loads(line) for line in path.read_text().splitlines() if line.strip()]
-    return rows[:limit] if limit is not None else rows
+    # Sharding deterministe par index absolu dans le fichier (stable d'une
+    # execution a l'autre, fichier source statique) : chaque position
+    # appartient a EXACTEMENT un shard, jamais retraitee par un autre --
+    # essentiel pour paralleliser sur plusieurs sessions Colab en meme
+    # temps sans travail en double ni ecriture concurrente sur le meme
+    # cache SQLite (chaque shard a son propre --cache-dir/--out-dir).
+    shard = [row for i, row in enumerate(rows) if i % num_shards == shard_index]
+    return shard[:limit] if limit is not None else shard
 
 
 def main() -> None:
@@ -91,9 +98,13 @@ def main() -> None:
     parser.add_argument(
         "--cache-dir", type=Path, required=True, help="cache d'annotations SQLite -- DOIT etre frais, voir ATTENTION en tete de fichier"
     )
-    parser.add_argument("--limit", type=int, default=None, help="pilote : limite le nombre de positions PAR split")
+    parser.add_argument("--limit", type=int, default=None, help="pilote : limite le nombre de positions PAR split (applique APRES le sharding)")
     parser.add_argument("--num-workers", type=int, default=8)
+    parser.add_argument("--shard-index", type=int, default=0, help="index de ce shard, 0..num-shards-1 (ex. plusieurs sessions Colab en parallele)")
+    parser.add_argument("--num-shards", type=int, default=1, help="nombre total de shards -- chaque position va a EXACTEMENT un shard")
     args = parser.parse_args()
+    if not 0 <= args.shard_index < args.num_shards:
+        raise ValueError(f"--shard-index doit etre dans [0, {args.num_shards})")
 
     args.out_dir.mkdir(parents=True, exist_ok=True)
     cache_root = str(args.cache_dir)
@@ -108,7 +119,7 @@ def main() -> None:
     total_start = time.perf_counter()
 
     for split_name in SPLIT_NAMES:
-        rows = _load_split(args.input_dir / f"{split_name}.jsonl", args.limit)
+        rows = _load_split(args.input_dir / f"{split_name}.jsonl", args.shard_index, args.num_shards, args.limit)
         if not rows:
             continue
         payloads = [
@@ -156,6 +167,8 @@ def main() -> None:
         "generated_at_unix": time.time(),
         "source": f"re-annotation de {args.input_dir} avec le professeur actuel (correctif bidoua/Yinda inclus)",
         "source_input_dir": str(args.input_dir),
+        "shard_index": args.shard_index,
+        "num_shards": args.num_shards,
         "total_positions": sum(counts.values()),
         "teacher_config": asdict(REANNOTATE_CONFIG),
         "counts_per_split": counts,
