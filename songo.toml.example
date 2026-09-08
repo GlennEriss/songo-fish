@@ -13,10 +13,11 @@ provider = "local"
 # Windows : chemin avec des slashs avant, ex "D:/songo-data".
 data_root = "D:/songo-data"
 
-# Workers d'annotation. Defaut du code = moitie des coeurs logiques.
-# Machine cible (4 coeurs / 8 threads, 18 Go) : 3 a 6. Chaque worker porte
-# sa propre table de transposition de plusieurs Mo -- ne pas mettre tous
-# les threads, la RAM et la contention SQLite en patissent.
+# Workers d'annotation (Phase 2 du build : nombre de positions annotees en
+# parallele). Defaut du code = moitie des coeurs logiques. Chaque worker
+# porte sa propre table de transposition de plusieurs Mo -- ne pas mettre
+# tous les threads, la RAM et la contention SQLite en patissent. Baisser si
+# la RAM sature pendant la generation.
 num_workers = 6
 
 # "cpu" (defaut, recommande : le reseau est minuscule, le GPU n'aide pas),

@@ -25,6 +25,116 @@ position), `train` par `model_v<version>.resume.pt` (à l'époque),
 `tournament` par un JSONL des parties jouées. Détails :
 [`docs/trainer/provider-architecture.md`](../../docs/trainer/provider-architecture.md#reprise-après-un-arrêt-brutal).
 
+## Pas à pas Windows — de zéro au modèle entraîné
+
+PowerShell, **depuis la racine du dépôt**. Le venv est appelé directement
+(`.\.venv\Scripts\python.exe`) pour éviter les soucis d'`Activate.ps1`.
+
+### 1. Code à jour
+
+```powershell
+git checkout dev
+git pull origin dev
+```
+
+### 2. Python 3.12 + environnement virtuel
+
+```powershell
+py -3.12 --version
+py -3.12 -m venv .venv
+```
+
+Si `py -3.12` échoue : installer Python 3.12 depuis python.org (cocher
+« Add python.exe to PATH »), rouvrir PowerShell, recommencer.
+
+### 3. Dépendances (numba, torch, pytest, onnx…)
+
+```powershell
+.\.venv\Scripts\python.exe -m pip install --upgrade pip
+.\.venv\Scripts\python.exe -m pip install -e ".[dev,perf,train,export]"
+```
+
+### 4. Fichier de config
+
+```powershell
+@"
+[runtime]
+provider = "local"
+num_workers = 6
+device = "cpu"
+"@ | Set-Content -Encoding ascii songo.toml
+```
+
+`num_workers = 6` = 6 positions annotées en parallèle (Phase 2). Baisser
+si la RAM sature pendant la génération. `data_root` non renseigné ⇒ les
+données vont dans `.\data\`.
+
+### 5. Récupérer le champion actuel
+
+Copier **`data\checkpoints\`** depuis la machine qui a servi jusqu'ici
+(`registry.json` + `model_v0.2.0.pt` + `.onnx`, ~2 Mo) vers
+**`data\checkpoints\`** ici — nécessaire pour le tournoi vs `champion` de
+l'étape 10.
+
+### 6. Vérification
+
+```powershell
+.\.venv\Scripts\python.exe -m pytest -q
+.\.venv\Scripts\python.exe -m songo_ai.cloud config
+```
+
+Le tout premier `import` compile Numba (~20-30 s, une seule fois).
+
+### 7. Pilote — mesure la vitesse réelle (~5-15 min)
+
+```powershell
+.\.venv\Scripts\python.exe -m songo_ai.cloud run build --positions 50 --seed 2026 --preset deep
+```
+
+La ligne `ETA … min` donne la durée du vrai run. Le preset `deep` utilise
+déjà le professeur bidoua/territoire (rien à configurer, cf.
+`docs/trainer/README.md`).
+
+### 8. Génération du dataset (long — laisser tourner)
+
+```powershell
+powercfg /change standby-timeout-ac 0
+powercfg /change hibernate-timeout-ac 0
+.\.venv\Scripts\python.exe -m songo_ai.cloud run build --positions 100000 --seed 2026 --preset deep 2>&1 | Tee-Object -FilePath build_s2026_100k.log
+```
+
+**Si ça coupe : relancer exactement la même commande.** Le cache
+d'annotations (`data\datasets\dataset_s2026_100000\annotation_cache\`)
+fait reprendre où c'était (log `reprise : X/100000 déjà en cache`).
+
+### 9. Entraînement
+
+```powershell
+.\.venv\Scripts\python.exe -m songo_ai.cloud run train --version 0.3.0 --dataset datasets/dataset_s2026_100000 --epochs 150 --patience 15 2>&1 | Tee-Object -FilePath train_v0.3.0.log
+```
+
+Reprise aussi : relancer la même commande repart à la dernière époque
+sauvegardée (`data\checkpoints\model_v0.3.0.resume.pt`).
+
+### 10. Tournois
+
+```powershell
+.\.venv\Scripts\python.exe -m songo_ai.cloud run tournament --a 0.3.0 --b champion --games 200
+.\.venv\Scripts\python.exe -m songo_ai.cloud run tournament --a 0.3.0 --b "minimax:4" --games 200
+```
+
+### 11. Promotion — seulement si 0.3.0 gagne, après lecture des résultats
+
+```powershell
+.\.venv\Scripts\python.exe -c "from songo_ai.model import promote_version; promote_version('0.3.0')"
+```
+
+### Palier suivant
+
+Après avoir vérifié que 0.3.0 ≥ champion, refaire 8→10 avec un volume
+plus grand et un nouveau seed : `--positions 300000 --seed 2027`, puis
+`--version 0.4.0 --dataset datasets/dataset_s2027_300000`.
+
 ## Scripts
 
 - `run_local.ps1` / `run_local.sh` — raccourci machine : active le venv et lance `python -m songo_ai.cloud` en provider `local`

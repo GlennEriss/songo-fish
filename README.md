@@ -37,3 +37,19 @@ python3.12 -m venv .venv
 ```bash
 .venv/bin/pytest
 ```
+
+## Générer un dataset / entraîner un modèle
+
+Runtime `local` par défaut (`gcp` en option) — voir
+[`docs/trainer/provider-architecture.md`](docs/trainer/provider-architecture.md).
+
+```bash
+songo-cloud run build      --positions 100000 --seed 2026 --preset deep
+songo-cloud run train      --version 0.3.0 --dataset datasets/dataset_s2026_100000
+songo-cloud run tournament --a 0.3.0 --b champion
+```
+
+Séquence complète pas à pas (Windows, de l'install au modèle entraîné) :
+[`apps/trainer/README.md`](apps/trainer/README.md#pas-à-pas-windows--de-zéro-au-modèle-entraîné).
+Les jobs interrompus reprennent où ils s'étaient arrêtés — relancer la
+même commande.
