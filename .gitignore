@@ -5,6 +5,10 @@ __pycache__/
 *.egg-info/
 .DS_Store
 
+# Config runtime propre a la machine (provider, data_root, workers).
+# Versionne : songo.toml.example
+songo.toml
+
 # Datasets, cache d'annotations et checkpoints generes : regenerables,
 # destines a Cloud Storage (section 11.1 du plan), pas au depot git.
 data/

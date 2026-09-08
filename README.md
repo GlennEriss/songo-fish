@@ -12,7 +12,7 @@ songo/
 │   └── songo_ai/       # coeur partage : regles, recherche, professeur,
 │                        # generation, dataset, modele, evaluation
 ├── apps/
-│   ├── trainer/         # generation de dataset, entrainement, orchestration GCP
+│   ├── trainer/         # generation de dataset, entrainement, tournois (runtime local/gcp)
 │   └── table/            # table de jeu interactive (a venir) : jouer contre
 │                          # le modele entraine et differents niveaux de minimax
 ├── docs/

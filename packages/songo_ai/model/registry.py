@@ -172,6 +172,11 @@ def train_and_register(
     partir de maintenant (au lieu d'appeler train_model puis a construire
     le manifeste a la main, comme pour les deux premieres versions)."""
     checkpoint_path = Path(checkpoint_dir) / f"model_v{version}.pt"
+    # Reprise : un entrainement interrompu (crash, coupure) redemarre a la
+    # derniere epoque sauvegardee au lieu de repartir de zero. La version
+    # etant unique par run (convention : un entrainement = une version
+    # from scratch), relancer le meme `--version` = vouloir reprendre.
+    resume_path = Path(checkpoint_dir) / f"model_v{version}.resume.pt"
 
     history = train_model(
         train_shard=train_shard,
@@ -186,6 +191,7 @@ def train_and_register(
         device=device,
         checkpoint_path=checkpoint_path,
         early_stopping_patience=early_stopping_patience,
+        resume_path=resume_path,
     )
 
     manifest = build_manifest(

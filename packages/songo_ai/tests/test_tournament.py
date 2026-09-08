@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from songo_ai.evaluation import play_match
 from songo_ai.evaluation.tournament import _wilson_interval
 from songo_ai.generation import make_shallow_search_agent, random_agent
@@ -48,3 +50,33 @@ def test_opening_random_plies_restores_game_diversity() -> None:
     agent_y = make_shallow_search_agent(max_depth=1, max_nodes=5_000, max_time_s=0.5)
     result = play_match(agent_x, agent_y, num_games=10, seed=7, opening_random_plies=4)
     assert result.distinct_games > 2
+
+
+def test_play_match_resume_matches_an_uninterrupted_run(tmp_path, monkeypatch) -> None:
+    """Chaque partie a son propre RNG -> une reprise donne exactement le
+    meme resultat qu'un tournoi non interrompu."""
+    baseline = play_match(random_agent, random_agent, num_games=12, seed=3, opening_random_plies=2)
+
+    import songo_ai.evaluation.tournament as tmod
+
+    real_initial = tmod.FastSongoGame.initial
+    calls = {"n": 0}
+
+    def _crash_after_7(*args, **kwargs):
+        calls["n"] += 1
+        if calls["n"] > 7:
+            raise RuntimeError("coupure simulee")
+        return real_initial(*args, **kwargs)
+
+    resume_path = tmp_path / "match.jsonl"
+    monkeypatch.setattr(tmod.FastSongoGame, "initial", staticmethod(_crash_after_7))
+    with pytest.raises(RuntimeError):
+        play_match(random_agent, random_agent, num_games=12, seed=3, opening_random_plies=2, resume_path=resume_path)
+    assert len(resume_path.read_text().splitlines()) == 7
+
+    monkeypatch.undo()
+    resumed = play_match(random_agent, random_agent, num_games=12, seed=3, opening_random_plies=2, resume_path=resume_path)
+
+    assert (resumed.wins_a, resumed.wins_b, resumed.draws) == (baseline.wins_a, baseline.wins_b, baseline.draws)
+    assert resumed.distinct_games == baseline.distinct_games
+    assert not resume_path.exists()

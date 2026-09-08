@@ -78,7 +78,12 @@ class AnnotationCache:
             return cached
         annotation = teacher.annotate(game)
         self.put(zhash, teacher.config, annotation)
-        return annotation
+        # Renvoyer la forme RELUE, pas l'objet fraichement calcule : le
+        # round-trip JSON (tuple->list->tuple, cles de dict en int, repr des
+        # floats) doit etre neutre, et le garantir ici rend une reprise
+        # totalement transparente -- la sortie d'un run ne depend pas de
+        # savoir quelles positions venaient deja du cache.
+        return self.get(zhash, teacher.config)
 
     def __len__(self) -> int:
         return self._conn.execute("SELECT COUNT(*) FROM annotations").fetchone()[0]

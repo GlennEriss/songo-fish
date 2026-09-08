@@ -84,3 +84,30 @@ def test_build_dataset_end_to_end_small_scale(tmp_path: Path) -> None:
     assert all_trajectory_ids["train"] & all_trajectory_ids["val"] == set()
     assert all_trajectory_ids["train"] & all_trajectory_ids["test"] == set()
     assert all_trajectory_ids["val"] & all_trajectory_ids["test"] == set()
+
+
+def test_build_dataset_resumes_from_annotation_cache(tmp_path: Path, monkeypatch) -> None:
+    """Un relancement (memes seed/out_dir) ne re-annote AUCUNE position deja
+    en cache : ici on casse `DeepTeacher.annotate` au 2e passage, le build
+    doit quand meme aboutir a un manifeste identique."""
+    config = TeacherConfig(
+        initial_depth=2, depth_step=2, max_depth=6, max_nodes=20_000, max_time_s=2.0,
+        stability_window=2, min_margin=10.0, tier=STANDARD,
+    )
+    kwargs = dict(num_positions=24, out_dir=tmp_path, seed=7, teacher_config=config, trajectory_multiplier=4, num_workers=1)
+
+    first = build_dataset(**kwargs)
+
+    # 2e run : toute annotation reelle doit maintenant echouer -- si le
+    # resume fonctionne, plus aucune n'est appelee.
+    from songo_ai.teachers.deep_teacher import DeepTeacher
+
+    def _boom(self, game):
+        raise AssertionError("annotate() appele alors que tout devait venir du cache")
+
+    monkeypatch.setattr(DeepTeacher, "annotate", _boom)
+    (tmp_path / "manifest.json").unlink()
+    second = build_dataset(**kwargs)
+
+    assert second["checksums_sha256"] == first["checksums_sha256"]
+    assert second["total_positions"] == first["total_positions"]

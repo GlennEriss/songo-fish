@@ -1,8 +1,16 @@
 #!/usr/bin/env python3
-"""Palier 100k (etape 7, config profonde) - destine a tourner sur une VM
-GCP (voir scripts/gcp_startup_script.sh). Config "tres profonde mais
-budget-consciente" validee localement (moyenne 6.5s/position, mediane
-0.4s, ~17% des positions tapent le plafond de noeuds)."""
+"""Palier 100k (etape 7, config profonde). Historiquement le point d'entree
+GCP ; depuis la migration multi-provider (`songo_ai.cloud`), ce n'est plus
+qu'un raccourci vers le runtime unifie, execute en provider `local` -- que
+ce "local" soit ta machine Windows ou la VM Compte Engine jetable, le code
+est le meme (voir docs/trainer/provider-architecture.md).
+
+Equivalent direct :
+    python -m songo_ai.cloud run build --positions 100000 --seed 456 --preset deep
+
+Toujours appele par gcp_startup_script.sh avec (num_positions, seed) ; sur
+la VM, SONGO_DATA_ROOT=/tmp fait ecrire dans /tmp/dataset_v002_<N>/ comme
+avant, et le startup script upload la release + le cache vers GCS."""
 
 from __future__ import annotations
 
@@ -10,46 +18,29 @@ import json
 import os
 import sys
 import time
-from pathlib import Path
 
-from songo_ai.dataset import build_dataset
-from songo_ai.teachers import STANDARD, TeacherConfig
-
-DEEP_CONFIG = TeacherConfig(
-    initial_depth=6,
-    depth_step=2,
-    max_depth=28,
-    max_nodes=3_000_000,
-    max_time_s=45.0,
-    stability_window=3,
-    min_margin=15.0,
-    tier=STANDARD,
-)
+from songo_ai.cloud import BuildSpec, load_config
+from songo_ai.cloud.providers import LocalProvider
 
 
 def main() -> None:
-    # Arguments optionnels : nombre de positions (defaut 100000) puis seed
-    # (defaut 456, celui du palier 100k). Permet de reutiliser ce meme
-    # script pour un test a blanc rapide (ex: 30) avant de lancer le vrai
-    # palier (section 11.3 : micro-pilote d'abord), et de choisir un seed
-    # different de 456 pour un nouveau palier -- meme trajectoires brutes
-    # sinon, donc chevauchement avec le dataset 100k deja genere.
     num_positions = int(sys.argv[1]) if len(sys.argv) > 1 else 100_000
     seed = int(sys.argv[2]) if len(sys.argv) > 2 else 456
-    out_dir = Path(f"/tmp/dataset_v002_{num_positions}")
-    start = time.perf_counter()
-    manifest = build_dataset(
+
+    # Compat startup script GCP : OUT_DIR=/tmp/dataset_v002_<N>, cache dans
+    # OUT_DIR/annotation_cache. On force donc data_root=/tmp et un nom sans
+    # prefixe "datasets/".
+    os.environ.setdefault("SONGO_DATA_ROOT", "/tmp")
+    config = load_config().with_overrides(provider="local")
+    spec = BuildSpec(
         num_positions=num_positions,
-        out_dir=out_dir,
         seed=seed,
-        teacher_config=DEEP_CONFIG,
-        trajectory_multiplier=4,
-        max_moves=300,
-        # S'adapte a la machine : 8 workers sur un e2-standard-8, 56 sur un
-        # c2d-highcpu-56, etc. L'annotation est CPU-bound et embarrassingly
-        # parallel, on prend tous les coeurs disponibles.
-        num_workers=os.cpu_count() or 8,
+        teacher_preset="deep",
+        dataset_name=f"dataset_v002_{num_positions}",
     )
+
+    start = time.perf_counter()
+    manifest = LocalProvider(config).run_build(spec)
     elapsed = time.perf_counter() - start
     print(f"TERMINE en {elapsed / 3600:.2f}h pour {manifest['total_positions']} positions")
     print(json.dumps(manifest, indent=2))

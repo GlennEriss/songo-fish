@@ -4,10 +4,11 @@ demarrant de l'etat initial", pas de graines arbitraires)."""
 
 from __future__ import annotations
 
+import hashlib
 import random
 import uuid
 from dataclasses import dataclass
-from typing import List
+from typing import List, Optional
 
 from .agents import Agent
 from songo_ai.songo.fast_rules import FastSongoGame
@@ -22,7 +23,13 @@ class TrajectoryPosition:
     total_moves: int  # rempli apres la fin de la partie (longueur totale)
 
 
-def generate_trajectory(agent: Agent, rng: random.Random, max_moves: int = 400, game_factory=FastSongoGame.initial) -> List[TrajectoryPosition]:
+def generate_trajectory(
+    agent: Agent,
+    rng: random.Random,
+    max_moves: int = 400,
+    game_factory=FastSongoGame.initial,
+    trajectory_id: Optional[str] = None,
+) -> List[TrajectoryPosition]:
     """Joue une partie complete et renvoie chaque position AVANT chaque coup
     (jamais la position terminale : section 6.6, "aucune position
     terminale"). `total_moves` permet de classer la phase de partie
@@ -31,9 +38,15 @@ def generate_trajectory(agent: Agent, rng: random.Random, max_moves: int = 400, 
     `game_factory` cree le moteur de jeu : FastSongoGame (Numba) par
     defaut pour la production (section 12.1 : implementation interchangeable
     validee par test differentiel), SongoLegacyGame reste utilisable pour
-    deboguer/comparer."""
+    deboguer/comparer.
 
-    trajectory_id = uuid.uuid4().hex[:12]
+    `trajectory_id` : fourni par `generate_trajectories` de facon
+    deterministe (seed + index) pour que deux runs -- ou une reprise --
+    donnent des identifiants identiques ; un UUID aleatoire par defaut pour
+    les appels directs isoles."""
+
+    if trajectory_id is None:
+        trajectory_id = uuid.uuid4().hex[:12]
     game = game_factory()
     raw_positions: List[State] = []
 
@@ -65,7 +78,10 @@ def generate_trajectories(
     deterministe pour une seed donnee."""
     rng = random.Random(seed)
     positions: List[TrajectoryPosition] = []
-    for _ in range(num_trajectories):
+    for index in range(num_trajectories):
         agent = agent_factory(rng)
-        positions.extend(generate_trajectory(agent, rng, max_moves=max_moves, game_factory=game_factory))
+        tid = hashlib.sha1(f"{seed}:{index}".encode()).hexdigest()[:12]
+        positions.extend(
+            generate_trajectory(agent, rng, max_moves=max_moves, game_factory=game_factory, trajectory_id=tid)
+        )
     return positions

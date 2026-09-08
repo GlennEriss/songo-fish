@@ -1,20 +1,35 @@
 # trainer
 
-Génération de dataset, entraînement du réseau, orchestration GCP + Google
-Colab. Consomme `packages/songo_ai`.
+Génération de dataset, entraînement du réseau, tournois. Consomme
+`packages/songo_ai`.
 
-**Deux providers de calcul, deux rôles distincts** (juillet 2026) :
-- **GCP Compute Engine** : génération/annotation de dataset (le professeur
-  tourne longtemps, CPU-bound, embarrassingly parallel — voir `build_100k_gcp.py`)
-- **Google Colab** : entraînement du réseau (voir `colab_train.ipynb`).
-  Datasets et checkpoints vivent sur **Google Drive** (pas sur Colab
-  lui-même, éphémère), pas sur GCP — évite de garder une VM/un bucket GCP
-  payant en continu pour un entraînement qui ne prend que quelques minutes.
+**Runtime multi-provider** (septembre 2026) — `songo_ai.cloud`, voir
+[`docs/trainer/provider-architecture.md`](../../docs/trainer/provider-architecture.md) :
+
+- **`local` (défaut)** : tout tourne sur la machine — dev, tests,
+  génération ≤ ~100k positions, **tout l'entraînement**, **tous les
+  tournois**. `songo-cloud run {build,train,tournament} ...` (ou
+  `python -m songo_ai.cloud ...`, ou `run_local.ps1` / `run_local.sh`).
+- **`gcp`** : uniquement `run build`, pour une campagne d'annotation
+  massive (1M+) ponctuelle après franchissement d'une porte de volume
+  (§10.3). Provisionne une VM jetable qui exécute `build_100k_gcp.py` et
+  s'auto-détruit.
+
+Config : `songo.toml` (voir `songo.toml.example`) < env `SONGO_*`.
+Historique : avant septembre 2026, génération sur GCP Compute Engine +
+entraînement sur Colab/Drive ; les coûts GCP ont motivé le repli local.
+
+**Reprise après arrêt brutal** : relancer un job avec les mêmes arguments
+reprend où il s'était arrêté — `build` par le cache d'annotations (à la
+position), `train` par `model_v<version>.resume.pt` (à l'époque),
+`tournament` par un JSONL des parties jouées. Détails :
+[`docs/trainer/provider-architecture.md`](../../docs/trainer/provider-architecture.md#reprise-après-un-arrêt-brutal).
 
 ## Scripts
 
+- `run_local.ps1` / `run_local.sh` — raccourci machine : active le venv et lance `python -m songo_ai.cloud` en provider `local`
 - `bench_rules.py`, `bench_search.py`, `bench_fast_vs_reference.py` — benchmarks moteur (annexe C du plan)
-- `build_100k_gcp.py` — génération/annotation à grande échelle (config profonde), destiné à tourner sur GCP
+- `build_100k_gcp.py` — raccourci `songo-cloud run build --preset deep` ; toujours appelé par `gcp_startup_script.sh` sur la VM (y écrit `/tmp/dataset_v002_<N>/`)
 - `sync_cache.py` — snapshot à chaud du cache SQLite (utilisé par `gcp_startup_script.sh`)
 - `train_overfit_10k.py` — surapprentissage volontaire (validation pipeline, étape 6)
 - `train_and_eval_110k.py` — entraînement réel + tournoi contre agents de référence (étape 7)
@@ -75,18 +90,36 @@ from songo_ai.model import promote_version
 promote_version("0.2.0")
 ```
 
-## Entraîner sur Google Colab
+## Entraîner (local ou Colab)
 
-`colab_train.ipynb` : monte Google Drive (dossier `SongoFish/` partagé au
-préalable), clone le dépôt, entraîne, tourne le tournoi vs champion actuel
-— tout sur Drive, rien sur GCP. Uploader ce notebook sur Colab (ou
-`File > Open notebook > GitHub` en pointant sur ce dépôt) et l'exécuter
-cellule par cellule.
-
-## Lancer un job GCP
+Local :
 
 ```bash
-apps/trainer/scripts/package_for_gcp.sh
+songo-cloud run train --version 0.3.0 --dataset datasets/dataset_v006 --epochs 150
+songo-cloud run tournament --a 0.3.0 --b champion --games 200
+# promotion explicite après revue :
+python -c "from songo_ai.model import promote_version; promote_version('0.3.0')"
+```
+
+`colab_train.ipynb` : même chose sur Colab — monte Google Drive
+(`SONGO_DATA_ROOT=<Drive>/SongoFish`), clone le dépôt, `LocalProvider`.
+`File > Open notebook > GitHub` en pointant sur ce dépôt.
+
+## Lancer une campagne d'annotation massive sur GCP
+
+```bash
+SONGO_PROVIDER=gcp songo-cloud run build --positions 1000000 --seed 789 --preset deep
+```
+
+`GcpProvider` empaquette le code, crée la VM (startup script,
+`--max-run-duration`, auto-DELETE), et rend la commande de monitoring. La
+VM exécute `build_100k_gcp.py` (= `LocalProvider` sur la VM) et pousse la
+release vers GCS. Récupérer : `songo-cloud pull datasets/...`.
+
+Équivalent manuel (inchangé) :
+
+```bash
+SONGO_GCS_BUCKET=gs://... apps/trainer/scripts/package_for_gcp.sh
 gcloud compute instances create songo-dataset-XXX \
   --project songo-model-ai --zone us-central1-a \
   --machine-type c2d-highcpu-32 --image-family ubuntu-2404-lts-amd64 \
