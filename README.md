@@ -45,6 +45,7 @@ Runtime `local` par défaut (`gcp` en option) — voir
 
 ```bash
 songo-cloud run build      --positions 100000 --seed 2026 --preset deep
+songo-cloud run merge      --sources datasets/dataset_s2026_100000 datasets/dataset_s2027_100000 --out datasets/merged
 songo-cloud run train      --version 0.3.0 --dataset datasets/dataset_s2026_100000
 songo-cloud run tournament --a 0.3.0 --b champion
 ```

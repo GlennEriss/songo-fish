@@ -84,6 +84,17 @@ class TrainSpec:
 
 
 @dataclass
+class MergeSpec:
+    # noms logiques des releases a fusionner (>= 2), ex
+    # ["datasets/dataset_s2026_100000", "datasets/dataset_s2027_100000"]
+    sources: list
+    out_name: str
+    # section 6.3 : deux releases distinctes peuvent produire la MEME
+    # position par des chemins differents -- dedup par defaut.
+    deduplicate: bool = True
+
+
+@dataclass
 class MatchSpec:
     # chaque agent : "vX.Y.Z" (registre), "champion", "random",
     # "minimax:<depth>" (agent de reference)

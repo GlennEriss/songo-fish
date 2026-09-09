@@ -27,7 +27,7 @@ chemins `/content/drive/...`.
 | Où vivent les artefacts (datasets, caches, checkpoints, registre) | `ArtifactStore` (Strategy) | `songo_ai/cloud/storage.py` |
 | Où/comment un job s'exécute | `ComputeProvider` (Strategy + Template Method) | `songo_ai/cloud/providers.py` |
 | Quel provider, quel dossier, combien de workers, quel device | `RuntimeConfig` | `songo_ai/cloud/config.py` |
-| Quoi calculer (indépendant du provider) | `BuildSpec` / `TrainSpec` / `MatchSpec` | `songo_ai/cloud/jobs.py` |
+| Quoi calculer (indépendant du provider) | `BuildSpec` / `MergeSpec` / `TrainSpec` / `MatchSpec` | `songo_ai/cloud/jobs.py` |
 
 ## Résolution de la config
 
@@ -96,9 +96,9 @@ VM** — puis pousse la release vers GCS et s'auto-détruit. Réutilise tels
 quels `package_for_gcp.sh` et `gcp_startup_script.sh`, seul le bucket
 devient paramétrable.
 
-`run_train` / `run_tournament` lèvent `NotImplementedError` : le réseau
-est minuscule (quelques minutes de CPU), payer du cloud pour ça n'a aucun
-sens.
+`run_train` / `run_tournament` / `run_merge` lèvent `NotImplementedError` :
+entraînement et tournois = quelques minutes de CPU sur un réseau minuscule,
+merge = de la manipulation de fichiers. Rien à payer en cloud.
 
 ## Répartition recommandée
 
@@ -124,6 +124,7 @@ Preset `deep` ≈ 6,5 s/position en moyenne.
 # via l'entrypoint installé (project.scripts)
 songo-cloud config
 songo-cloud run build      --positions 10000 --seed 456 --preset deep
+songo-cloud run merge      --sources datasets/a datasets/b --out datasets/ab
 songo-cloud run train      --version 0.3.0 --dataset datasets/dataset_v006
 songo-cloud run tournament --a champion --b minimax:8
 

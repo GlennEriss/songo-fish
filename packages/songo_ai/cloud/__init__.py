@@ -7,11 +7,11 @@ option).
 - `jobs`      : `BuildSpec` / `TrainSpec` / `MatchSpec` + presets professeur
 - `providers` : `LocalProvider` / `GcpProvider`
 
-CLI : `python -m songo_ai.cloud run {build,train,tournament} ...`
+CLI : `python -m songo_ai.cloud run {build,merge,train,tournament} ...`
 """
 
 from .config import GcpConfig, RuntimeConfig, load_config
-from .jobs import TEACHER_PRESETS, BuildSpec, MatchSpec, TrainSpec
+from .jobs import TEACHER_PRESETS, BuildSpec, MatchSpec, MergeSpec, TrainSpec
 from .providers import ComputeProvider, GcpProvider, LocalProvider, make_provider
 from .storage import ArtifactStore, GcsStore, LocalStore, make_store
 
@@ -22,6 +22,7 @@ __all__ = [
     "TEACHER_PRESETS",
     "BuildSpec",
     "MatchSpec",
+    "MergeSpec",
     "TrainSpec",
     "ComputeProvider",
     "GcpProvider",

@@ -21,7 +21,7 @@ import json
 import sys
 
 from .config import load_config
-from .jobs import TEACHER_PRESETS, BuildSpec, MatchSpec, TrainSpec
+from .jobs import TEACHER_PRESETS, BuildSpec, MatchSpec, MergeSpec, TrainSpec
 from .providers import make_provider
 
 
@@ -64,6 +64,11 @@ def main(argv: list[str] | None = None) -> int:
     m.add_argument("--games", type=int, default=200)
     m.add_argument("--seed", type=int, default=0)
 
+    g = jobs.add_parser("merge", help="fusionner >=2 releases en une seule")
+    g.add_argument("--sources", nargs="+", required=True, help="noms logiques, ex datasets/dataset_s2026_100000")
+    g.add_argument("--out", required=True, help="nom logique de la release fusionnee")
+    g.add_argument("--no-dedup", action="store_true", help="ne pas dedupliquer les positions communes entre releases")
+
     args = parser.parse_args(argv)
 
     config = load_config().with_overrides(
@@ -101,6 +106,9 @@ def main(argv: list[str] | None = None) -> int:
     elif args.job == "tournament":
         spec = MatchSpec(agent_a=args.a, agent_b=args.b, num_games=args.games, seed=args.seed)
         _print(provider.run_tournament(spec))
+    elif args.job == "merge":
+        spec = MergeSpec(sources=args.sources, out_name=args.out, deduplicate=not args.no_dedup)
+        _print(provider.run_merge(spec))
     return 0
 
 

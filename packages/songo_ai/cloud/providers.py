@@ -23,7 +23,7 @@ from abc import ABC, abstractmethod
 from pathlib import Path
 
 from .config import RuntimeConfig
-from .jobs import BuildSpec, MatchSpec, TrainSpec
+from .jobs import BuildSpec, MatchSpec, MergeSpec, TrainSpec
 from .storage import ArtifactStore, make_store
 
 _SCRIPTS_DIR = Path(__file__).resolve().parents[3] / "apps" / "trainer" / "scripts"
@@ -47,6 +47,12 @@ class ComputeProvider(ABC):
     def run_tournament(self, spec: MatchSpec) -> dict:
         raise NotImplementedError(
             f"{type(self).__name__} ne gere pas les tournois -- ils tournent toujours en local. "
+            "Utiliser le provider 'local'."
+        )
+
+    def run_merge(self, spec: MergeSpec) -> dict:
+        raise NotImplementedError(
+            f"{type(self).__name__} ne gere pas la fusion -- operation fichier, toujours locale. "
             "Utiliser le provider 'local'."
         )
 
@@ -96,6 +102,17 @@ class LocalProvider(ComputeProvider):
             "champion": champion["version"] if champion else None,
             "promoted": spec.promote,
         }
+
+    def run_merge(self, spec: MergeSpec) -> dict:
+        from songo_ai.dataset import merge_releases
+
+        if len(spec.sources) < 2:
+            raise ValueError("merge : au moins 2 releases sources")
+        src_dirs = [self.store.pull(name) for name in spec.sources]
+        out_dir = self.store.resolve(spec.out_name)
+        manifest = merge_releases(src_dirs, out_dir, deduplicate=spec.deduplicate)
+        self.store.push(spec.out_name)
+        return manifest
 
     def run_tournament(self, spec: MatchSpec) -> dict:
         from songo_ai.evaluation import play_match

@@ -14,6 +14,7 @@ from songo_ai.cloud import (
     LocalProvider,
     LocalStore,
     MatchSpec,
+    MergeSpec,
     TrainSpec,
     load_config,
     make_provider,
@@ -97,6 +98,23 @@ def test_local_pipeline_build_train_tournament(monkeypatch, tmp_path):
     )
     assert match["games"] == 4
     assert 0.0 <= match["win_rate_a"] <= 1.0
+
+    provider.run_build(
+        BuildSpec(num_positions=40, seed=99, teacher_preset="default", dataset_name="datasets/pipe2")
+    )
+    merged = provider.run_merge(
+        MergeSpec(sources=["datasets/pipe", "datasets/pipe2"], out_name="datasets/pipe_merged")
+    )
+    assert merged["total_positions"] > 0
+    assert (tmp_path / "datasets/pipe_merged/train.jsonl").exists()
+    assert merged["merged_from"] and len(merged["source_manifests_summary"]) == 2
+
+
+def test_merge_needs_at_least_two_sources(monkeypatch, tmp_path):
+    monkeypatch.setenv("SONGO_DATA_ROOT", str(tmp_path))
+    provider = make_provider(load_config())
+    with pytest.raises(ValueError):
+        provider.run_merge(MergeSpec(sources=["datasets/only-one"], out_name="datasets/x"))
 
 
 def test_multiprocessing_entrypoints_are_guarded():

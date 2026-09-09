@@ -8,7 +8,7 @@ Génération de dataset, entraînement du réseau, tournois. Consomme
 
 - **`local` (défaut)** : tout tourne sur la machine — dev, tests,
   génération ≤ ~100k positions, **tout l'entraînement**, **tous les
-  tournois**. `songo-cloud run {build,train,tournament} ...` (ou
+  tournois**. `songo-cloud run {build,merge,train,tournament} ...` (ou
   `python -m songo_ai.cloud ...`, ou `run_local.ps1` / `run_local.sh`).
 - **`gcp`** : uniquement `run build`, pour une campagne d'annotation
   massive (1M+) ponctuelle après franchissement d'une porte de volume
@@ -162,9 +162,9 @@ python -c "from songo_ai.model import promote_version; promote_version('0.3.0')"
 
 ### Palier suivant
 
-Après avoir vérifié que 0.3.0 ≥ champion, refaire 9→10 avec un volume
-plus grand et un nouveau seed : `--positions 300000 --seed 2027`, puis
-`--version 0.4.0 --dataset datasets/dataset_s2027_300000`.
+Après avoir vérifié que 0.3.0 ≥ champion, monter en volume — voir
+**« Agrandir le dataset »** plus bas — puis `run train --version 0.4.0`
+sur la release plus grande.
 
 ## Pas à pas macOS / Linux — de zéro au modèle entraîné
 
@@ -279,6 +279,38 @@ python -c "from songo_ai.model import promote_version; promote_version('0.3.0')"
 
 `apps/trainer/scripts/run_local.sh run build --positions 100000 --seed 2026 --preset deep`
 fait l'activation du venv + le lancement en une commande.
+
+## Agrandir le dataset
+
+**Relancer `run build` avec les mêmes `--positions`/`--seed` ne crée ni
+n'agrandit rien** : l'échantillonnage est déterministe, toutes les
+positions sont déjà en cache, les shards sont réécrits à l'identique
+(c'est le mécanisme de reprise — quand c'est fini, « reprendre » = « rien
+à faire »). Durée d'un re-run terminé : quelques minutes, zéro annotation.
+
+Où ça vit : `data/datasets/dataset_s<seed>_<positions>/` —
+`annotation_cache/cache.db` grossit **pendant** le run (c'est là qu'est la
+vraie progression, sinon la ligne de log à l'écran) ; `train/val/test.jsonl`
+et `manifest.json` n'apparaissent **qu'à la toute fin**.
+
+Pour un corpus plus grand : générer une **2ᵉ release avec un autre seed**
+(positions disjointes), puis fusionner.
+
+```bash
+python -m songo_ai.cloud run build  --positions 100000 --seed 2027 --preset deep
+python -m songo_ai.cloud run merge \
+  --sources datasets/dataset_s2026_100000 datasets/dataset_s2027_100000 \
+  --out     datasets/dataset_200k_merged
+python -m songo_ai.cloud run train --version 0.4.0 --dataset datasets/dataset_200k_merged
+```
+
+`run merge` déduplique les positions communes entre releases par défaut
+(section 6.3) ; `--no-dedup` pour désactiver. C'est le pattern du projet
+(0.1.0 sur 10k+100k fusionnés, 0.2.0 sur 110k+290k).
+
+> Changer `--positions` (ex. 150000) au lieu de fusionner : crée un
+> nouveau dossier avec un **cache neuf** → ré-annote tout depuis zéro. À
+> éviter, sauf si tu repars vraiment de rien.
 
 ## Scripts
 
