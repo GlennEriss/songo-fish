@@ -254,7 +254,7 @@ python -m songo_ai.cloud run build --positions 50 --seed 2026 --preset deep
 
 ```bash
 caffeinate -is python -m songo_ai.cloud run build \
-  --positions 100000 --seed 2026 --preset deep 2>&1 | tee build_s2026_100k.log
+  --positions 1000000 --seed 2026 --preset deep 2>&1 | tee build_s2026_100k.log
 ```
 
 **Si ça coupe : relance exactement la même commande** — reprise via le
