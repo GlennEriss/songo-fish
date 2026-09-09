@@ -27,8 +27,19 @@ position), `train` par `model_v<version>.resume.pt` (à l'époque),
 
 ## Pas à pas Windows — de zéro au modèle entraîné
 
-PowerShell, **depuis la racine du dépôt**. Le venv est appelé directement
-(`.\.venv\Scripts\python.exe`) pour éviter les soucis d'`Activate.ps1`.
+PowerShell. Une fois le venv **activé** (étape 3), toutes les commandes
+sont de simples `python ...` / `pip ...`. Si tu fermes le terminal,
+réactive : `cd C:\dev\songo-fish ; .\.venv\Scripts\Activate.ps1`.
+
+### 0. Sortir le projet de OneDrive
+
+OneDrive casse le venv, corrompt le cache SQLite et essaie de synchroniser
+des Go de dataset. Le projet doit être sur un chemin local simple.
+
+```powershell
+robocopy "$env:USERPROFILE\OneDrive\Documents\projets\songo-fish" "C:\dev\songo-fish" /E /MOVE
+cd C:\dev\songo-fish
+```
 
 ### 1. Code à jour
 
@@ -37,24 +48,55 @@ git checkout dev
 git pull origin dev
 ```
 
-### 2. Python 3.12 + environnement virtuel
+### 2. Créer l'environnement virtuel (Python 3.12+)
 
 ```powershell
 py -3.12 --version
 py -3.12 -m venv .venv
 ```
 
-Si `py -3.12` échoue : installer Python 3.12 depuis python.org (cocher
-« Add python.exe to PATH »), rouvrir PowerShell, recommencer.
+Si `py -3.12` échoue : installe Python depuis python.org (coche « Add
+python.exe to PATH »), rouvre PowerShell, recommence. `py -3.13` marche
+aussi.
 
-### 3. Dépendances (numba, torch, pytest, onnx…)
+### 3. Activer l'environnement virtuel
 
 ```powershell
-.\.venv\Scripts\python.exe -m pip install --upgrade pip
-.\.venv\Scripts\python.exe -m pip install -e ".[dev,perf,train,export]"
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass -Force
+.\.venv\Scripts\Activate.ps1
 ```
 
-### 4. Fichier de config
+Le prompt doit maintenant commencer par `(.venv)`. `python` et `pip`
+pointent désormais vers le venv.
+
+### 4. pip patient (connexion instable) + torch CPU d'abord
+
+```powershell
+python -m pip config set global.timeout 120
+python -m pip config set global.retries 10
+python -m pip install --upgrade pip
+
+python -m pip install --index-url https://download.pytorch.org/whl/cpu torch
+```
+
+torch depuis l'index PyTorch = ~200 Mo (version CPU) au lieu de ~2,5 Go
+(version CUDA, inutile ici). **Si le téléchargement coupe : relance la
+même commande**, pip reprend où il en était.
+
+### 5. Le reste des dépendances
+
+```powershell
+python -m pip install -e ".[dev,perf,train]"
+```
+
+torch est déjà satisfait, pip ne le re-télécharge pas. (`export`/onnx
+volontairement omis — à ajouter plus tard pour le portage C#.)
+
+> Si torch refuse de s'installer, tu peux quand même **générer le
+> dataset** (torch ne sert qu'à l'entraînement) : `python -m pip install
+> -e ".[perf]"` puis saute à l'étape 8.
+
+### 6. Fichier de config
 
 ```powershell
 @"
@@ -66,74 +108,177 @@ device = "cpu"
 ```
 
 `num_workers = 6` = 6 positions annotées en parallèle (Phase 2). Baisser
-si la RAM sature pendant la génération. `data_root` non renseigné ⇒ les
-données vont dans `.\data\`.
+si la RAM sature. `data_root` non renseigné ⇒ données dans `.\data\`.
 
-### 5. Récupérer le champion actuel
+### 7. Récupérer le champion actuel + vérifier
 
-Copier **`data\checkpoints\`** depuis la machine qui a servi jusqu'ici
-(`registry.json` + `model_v0.2.0.pt` + `.onnx`, ~2 Mo) vers
-**`data\checkpoints\`** ici — nécessaire pour le tournoi vs `champion` de
-l'étape 10.
-
-### 6. Vérification
+Copie **`data\checkpoints\`** depuis la machine précédente (`registry.json`
++ `model_v0.2.0.pt`, ~2 Mo) vers **`data\checkpoints\`** ici — nécessaire
+pour le tournoi vs `champion` (étape 10).
 
 ```powershell
-.\.venv\Scripts\python.exe -m pytest -q
-.\.venv\Scripts\python.exe -m songo_ai.cloud config
+python -m pytest -q
+python -m songo_ai.cloud config
 ```
 
 Le tout premier `import` compile Numba (~20-30 s, une seule fois).
 
-### 7. Pilote — mesure la vitesse réelle (~5-15 min)
+### 8. Pilote — mesure la vitesse réelle (~5-15 min)
 
 ```powershell
-.\.venv\Scripts\python.exe -m songo_ai.cloud run build --positions 50 --seed 2026 --preset deep
+python -m songo_ai.cloud run build --positions 50 --seed 2026 --preset deep
 ```
 
 La ligne `ETA … min` donne la durée du vrai run. Le preset `deep` utilise
-déjà le professeur bidoua/territoire (rien à configurer, cf.
-`docs/trainer/README.md`).
+déjà le professeur bidoua/territoire (rien à configurer, cf. plus bas).
 
-### 8. Génération du dataset (long — laisser tourner)
+### 9. Génération du dataset (long — laisser tourner)
 
 ```powershell
 powercfg /change standby-timeout-ac 0
 powercfg /change hibernate-timeout-ac 0
-.\.venv\Scripts\python.exe -m songo_ai.cloud run build --positions 100000 --seed 2026 --preset deep 2>&1 | Tee-Object -FilePath build_s2026_100k.log
+python -m songo_ai.cloud run build --positions 100000 --seed 2026 --preset deep 2>&1 | Tee-Object -FilePath build_s2026_100k.log
 ```
 
-**Si ça coupe : relancer exactement la même commande.** Le cache
+**Si ça coupe : relance exactement la même commande.** Le cache
 d'annotations (`data\datasets\dataset_s2026_100000\annotation_cache\`)
 fait reprendre où c'était (log `reprise : X/100000 déjà en cache`).
 
-### 9. Entraînement
+### 10. Entraînement + tournois
 
 ```powershell
-.\.venv\Scripts\python.exe -m songo_ai.cloud run train --version 0.3.0 --dataset datasets/dataset_s2026_100000 --epochs 150 --patience 15 2>&1 | Tee-Object -FilePath train_v0.3.0.log
+python -m songo_ai.cloud run train --version 0.3.0 --dataset datasets/dataset_s2026_100000 --epochs 150 --patience 15 2>&1 | Tee-Object -FilePath train_v0.3.0.log
+python -m songo_ai.cloud run tournament --a 0.3.0 --b champion --games 200
+python -m songo_ai.cloud run tournament --a 0.3.0 --b "minimax:4" --games 200
 ```
 
-Reprise aussi : relancer la même commande repart à la dernière époque
-sauvegardée (`data\checkpoints\model_v0.3.0.resume.pt`).
-
-### 10. Tournois
-
-```powershell
-.\.venv\Scripts\python.exe -m songo_ai.cloud run tournament --a 0.3.0 --b champion --games 200
-.\.venv\Scripts\python.exe -m songo_ai.cloud run tournament --a 0.3.0 --b "minimax:4" --games 200
-```
+L'entraînement reprend aussi (`data\checkpoints\model_v0.3.0.resume.pt`).
 
 ### 11. Promotion — seulement si 0.3.0 gagne, après lecture des résultats
 
 ```powershell
-.\.venv\Scripts\python.exe -c "from songo_ai.model import promote_version; promote_version('0.3.0')"
+python -c "from songo_ai.model import promote_version; promote_version('0.3.0')"
 ```
 
 ### Palier suivant
 
-Après avoir vérifié que 0.3.0 ≥ champion, refaire 8→10 avec un volume
+Après avoir vérifié que 0.3.0 ≥ champion, refaire 9→10 avec un volume
 plus grand et un nouveau seed : `--positions 300000 --seed 2027`, puis
 `--version 0.4.0 --dataset datasets/dataset_s2027_300000`.
+
+## Pas à pas macOS / Linux — de zéro au modèle entraîné
+
+Même provider (`local`), zsh/bash, **à lancer depuis la racine du dépôt**.
+
+> **Si le dossier `.venv/` existe déjà** (machine qui a déjà servi) : saute
+> l'étape 2 (et l'étape 4 si `python -m pytest -q` passe déjà). Fais les
+> étapes 1, 3, 5, puis 6→10.
+
+### 1. Code à jour
+
+```bash
+git checkout dev && git pull origin dev
+```
+
+### 2. Créer l'environnement virtuel (Python 3.12+)
+
+Prend le premier interpréteur 3.12+ disponible (Homebrew fournit souvent
+`python3.13`/`python3.14`, pas `python3.12`) :
+
+```bash
+python3.13 -m venv .venv || python3.12 -m venv .venv || python3.14 -m venv .venv || /opt/homebrew/bin/python3.13 -m venv .venv
+```
+
+Si aucun ne marche : `brew install python@3.13` (ou installeur python.org), rouvre le terminal, recommence.
+
+### 3. Activer l'environnement virtuel
+
+```bash
+source .venv/bin/activate
+python --version
+```
+
+Le prompt commence par `(.venv)` et `python --version` doit afficher
+3.12+. `python` et `pip` pointent maintenant vers le venv.
+
+> **Dans chaque nouveau terminal**, refais :
+> ```bash
+> cd /Users/glenneriss/Documents/projets/songo && source .venv/bin/activate
+> ```
+
+### 4. pip patient (connexion instable) + dépendances
+
+```bash
+python -m pip config set global.timeout 120
+python -m pip config set global.retries 10
+python -m pip install --upgrade pip
+python -m pip install -e ".[dev,perf,train]"
+```
+
+Sur macOS, `torch` est déjà en version CPU/MPS (pas de CUDA à télécharger),
+donc pas besoin d'index séparé. Si un téléchargement coupe, relance la
+commande — pip reprend.
+
+> Générer le dataset sans torch : `python -m pip install -e ".[perf]"`
+> puis saute à l'étape 8 (torch ne sert qu'à l'entraînement).
+
+### 5. Fichier de config
+
+```bash
+cat > songo.toml <<'EOF'
+[runtime]
+provider = "local"
+num_workers = 6
+device = "cpu"
+EOF
+```
+
+`num_workers` = (cœurs physiques − 1). `data_root` non renseigné ⇒ données
+dans `./data/`. `device = "cpu"` recommandé même avec un GPU Apple (MPS
+n'accélère pas ce petit réseau).
+
+### 6. Vérification
+
+```bash
+python -m pytest -q
+python -m songo_ai.cloud config
+```
+
+### 7. Pilote — mesure la vitesse réelle
+
+```bash
+python -m songo_ai.cloud run build --positions 50 --seed 2026 --preset deep
+```
+
+### 8. Génération du dataset (long — `caffeinate` empêche la veille)
+
+```bash
+caffeinate -is python -m songo_ai.cloud run build \
+  --positions 100000 --seed 2026 --preset deep 2>&1 | tee build_s2026_100k.log
+```
+
+**Si ça coupe : relance exactement la même commande** — reprise via le
+cache d'annotations (`data/datasets/dataset_s2026_100000/annotation_cache/`).
+
+### 9. Entraînement + tournois
+
+```bash
+python -m songo_ai.cloud run train --version 0.3.0 \
+  --dataset datasets/dataset_s2026_100000 --epochs 150 --patience 15 2>&1 | tee train_v0.3.0.log
+python -m songo_ai.cloud run tournament --a 0.3.0 --b champion --games 200
+python -m songo_ai.cloud run tournament --a 0.3.0 --b minimax:4 --games 200
+```
+
+### 10. Promotion — seulement si 0.3.0 gagne, après revue
+
+```bash
+python -c "from songo_ai.model import promote_version; promote_version('0.3.0')"
+```
+
+### Raccourci
+
+`apps/trainer/scripts/run_local.sh run build --positions 100000 --seed 2026 --preset deep`
+fait l'activation du venv + le lancement en une commande.
 
 ## Scripts
 
