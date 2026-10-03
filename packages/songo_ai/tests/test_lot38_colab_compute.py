@@ -4,7 +4,7 @@ ROOT=Path(__file__).resolve().parents[3]
 SCRIPT=(ROOT/"apps/trainer/scripts/run_srn_colab_benchmark.py").read_text()
 IMPORT=(ROOT/"apps/trainer/scripts/import_remote_experiment.py").read_text()
 def test_notebook_is_minimal_valid_json():
- d=json.loads((ROOT/"notebooks/songo_colab_compute_benchmark.ipynb").read_text());assert d["nbformat"]==4;assert len(d["cells"])<=8
+ d=json.loads((ROOT/"notebooks/songo_colab_compute_benchmark.ipynb").read_text());assert d["nbformat"]==4;assert len(d["cells"])<=9
 def test_environment_device_and_cpu_fallback_contract():
  assert "torch.cuda.is_available()" in SCRIPT and 'requested=="cuda"' in SCRIPT and 'torch.device("cpu")' in SCRIPT
  assert all(x in SCRIPT for x in ("python_version","torch_version","numpy_version","numba_version","GPU_name","GPU_memory_bytes"))

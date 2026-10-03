@@ -13,7 +13,7 @@ from songo_ai.model import SongoGraphBuilder, load_srn_checkpoint
 from songo_ai.search import MCTSConfig, SongoMCTS
 from songo_ai.songo.rules import SongoLegacyGame
 from run_srn_lot12 import sha256, write_json
-from run_srn_lot36 import EXPECTED_MINIMAX, exact_fingerprints
+from run_srn_lot36 import EXPECTED_MINIMAX
 
 OUT=Path("data/experiments/lot38_colab_compute");IDENTITY=Path("data/experiments/lot35_generator_pool/g4_champion_identity.json")
 POSITIONS=16;SEED=20263801;BATCHES=(1,8,16,32,64,128,256)
@@ -25,6 +25,15 @@ def git_commit():
  try:return subprocess.check_output(["git","rev-parse","HEAD"],text=True).strip()
  except Exception:return "UNAVAILABLE"
 def engine_fingerprint():return hashlib.sha256(Path("packages/songo_ai/songo/rules.py").read_bytes()).hexdigest()
+def pool_identity():
+ if not IDENTITY.exists():raise FileNotFoundError(f"missing POOL_G4R identity manifest: {IDENTITY}; upload/extract lot38_colab_inputs.tar.gz first")
+ return json.load(IDENTITY.open())["candidates"]["POOL"]
+def pool_fingerprints():
+ item=pool_identity();policy=Path(item["policy_checkpoint"]);value=Path(item["value_checkpoint"])
+ if not policy.exists() or not value.exists():raise FileNotFoundError("missing POOL_G4R checkpoints; upload/extract lot38_colab_inputs.tar.gz first")
+ observed={"model_id":item["model_id"],"policy_checkpoint":str(policy),"value_checkpoint":str(value),"policy_fingerprint":sha256(policy),"value_fingerprint":sha256(value),"architecture_fingerprint":item["architecture_fingerprint"]}
+ if observed["policy_fingerprint"]!=item["policy_fingerprint"] or observed["value_fingerprint"]!=item["value_fingerprint"]:raise RuntimeError("POOL_G4R input checkpoint fingerprint mismatch")
+ return observed
 def device_name(device):return torch.cuda.get_device_name(device) if device.type=="cuda" else platform.processor() or platform.machine()
 def choose_device(requested):
  if requested=="cuda" and not torch.cuda.is_available():raise RuntimeError("CUDA requested but unavailable")
@@ -51,7 +60,7 @@ def generate_positions():
  return states
 
 def prepare(a):
- a.output.mkdir(parents=True,exist_ok=True);d=choose_device(a.device);fps=exact_fingerprints()["POOL"];states=generate_positions()
+ a.output.mkdir(parents=True,exist_ok=True);d=choose_device(a.device);fps=pool_fingerprints();states=generate_positions()
  write_json(a.output/"environment.json",env(d));write_json(a.output/"benchmark_positions.json",{"seed":SEED,"count":len(states),"deterministic":True,"states":[{"board":list(s.board),"player_to_move":s.player_to_move} for s in states]});write_json(a.output/"configuration.json",{"lot":38,"model_probe":"POOL_G4R","budgets":{"smoke":1024,"main":4096},"benchmark_positions":POSITIONS,"batch_sizes":list(BATCHES),"current_mcts_inference_mode":"SINGLE_STATE","no_batched_mcts_implementation":True,"no_mcts65536":True,"training_performed":False,"optimizer_created":False,"backward_called":False,"minimax_labels":False});write_json(a.output/"fingerprints.json",{"before":{"model":fps,"engine":engine_fingerprint(),"minimax":EXPECTED_MINIMAX},"after":None});print(json.dumps(env(d),indent=2))
 
 class TimedEvaluator(nn.Module):
@@ -63,7 +72,7 @@ class TimedEvaluator(nn.Module):
   self.inference_s+=time.perf_counter()-t;self.calls+=1;self.states+=graph.batch_size;return out
 
 def load_model(device):
- item=json.load(IDENTITY.open())["candidates"]["POOL"];p=load_srn_checkpoint(item["policy_checkpoint"]).model.to(device).eval();v=load_srn_checkpoint(item["value_checkpoint"]).model.to(device).eval();return HybridPolicyValueEvaluator(p,v,name="POOL_G4R").to(device).eval()
+ item=pool_identity();p=load_srn_checkpoint(item["policy_checkpoint"]).model.to(device).eval();v=load_srn_checkpoint(item["value_checkpoint"]).model.to(device).eval();return HybridPolicyValueEvaluator(p,v,name="POOL_G4R").to(device).eval()
 def read_positions(path):
  d=json.load(path.open());return [RawSongoState(tuple(x["board"]),x["player_to_move"]) for x in d["states"]]
 
@@ -100,14 +109,15 @@ def benchmark(a):
 def finalize(a):
  cpu=json.load((a.output/"benchmark_cpu.json").open()) if (a.output/"benchmark_cpu.json").exists() else None;gpu=json.load((a.output/"benchmark_gpu.json").open()) if (a.output/"benchmark_gpu.json").exists() else None;batch=json.load((a.output/"srn_batch_benchmark.json").open()) if (a.output/"srn_batch_benchmark.json").exists() else {};corr=json.load((a.output/"correctness.json").open()) if (a.output/"correctness.json").exists() else {};speed=cpu["total_runtime_s"]/gpu["total_runtime_s"] if cpu and gpu else None
  cpu1=next((x for x in batch.get("cpu",[]) if x["batch_size"]==1),None);gpubest=max(batch.get("cuda",[]),key=lambda x:x["states_per_second"],default=None);beneficial=bool(gpubest and cpu1 and gpubest["states_per_second"]>1.2*cpu1["states_per_second"]);efficient=None if not gpu else speed>=1.2;under="YES" if gpu and not efficient and beneficial else "NO" if gpu else "INCONCLUSIVE"
- before=json.load((a.output/"fingerprints.json").open());after={"model":exact_fingerprints()["POOL"],"engine":engine_fingerprint(),"minimax":EXPECTED_MINIMAX};before["after"]=after;before["unchanged"]=before["before"]==after;write_json(a.output/"fingerprints.json",before)
+ before=json.load((a.output/"fingerprints.json").open());after={"model":pool_fingerprints(),"engine":engine_fingerprint(),"minimax":EXPECTED_MINIMAX};before["after"]=after;before["unchanged"]=before["before"]==after;write_json(a.output/"fingerprints.json",before)
  profiling={"CURRENT_INFERENCE_MODE":"SINGLE_STATE","cpu":cpu.get("profiling") if cpu else None,"gpu":gpu.get("profiling") if gpu else None,"GPU_UNDERUTILIZED_BY_CURRENT_MCTS":under};write_json(a.output/"profiling.json",profiling)
  decision={"COLAB_COMPATIBLE":"YES","CUDA_COMPATIBLE":"YES" if gpu else "N/A","CURRENT_MCTS_GPU_EFFICIENT":"YES" if efficient else "NO" if efficient is False else "INCONCLUSIVE","BATCHED_SRN_BENEFICIAL":"YES" if beneficial else "NO" if gpu else "INCONCLUSIVE","BATCHED_MCTS_RECOMMENDED":"YES" if beneficial and not efficient else "NO","GPU_SPEEDUP_CURRENT_MCTS":speed,"CURRENT_INFERENCE_MODE":"SINGLE_STATE","GPU_UNDERUTILIZED_BY_CURRENT_MCTS":under,"TRAINING_PERFORMED":"NO","OPTIMIZER_CREATED":"NO","BACKWARD_CALLED":"NO","MODEL_WEIGHTS_CHANGED":"NO" if before["unchanged"] else "YES","NEXT_ACTION":"BATCHED_MCTS_GPU_DESIGN" if beneficial and not efficient else "DEEP_MCTS_TARGET_CONVERGENCE_STUDY" if efficient else "MULTI_CPU_REMOTE_WORKER_DESIGN"};write_json(a.output/"decision.json",decision);write_json(a.output/"report.json",{"lot":38,"environment":json.load((a.output/"environment.json").open()),"decision":decision,"correctness":corr,"profiling":profiling});print(json.dumps(decision,indent=2))
 
 def export(a):
- files=[p for p in sorted(a.output.glob("*.json")) if p.name!="experiment_manifest.json"];manifest={"experiment_id":"lot38_colab_compute","lot":38,"git_commit":git_commit(),"worker_type":"COLAB" if "COLAB_RELEASE_TAG" in os.environ else "LOCAL","hardware":platform.platform(),"device":json.load((a.output/"environment.json").open())["device"],"model_fingerprints":exact_fingerprints()["POOL"],"engine_fingerprint":engine_fingerprint(),"configuration":json.load((a.output/"configuration.json").open()),"artifact_checksums":{p.name:sha256(p) for p in files}};write_json(a.output/"experiment_manifest.json",manifest)
+ files=[p for p in sorted(a.output.glob("*.json")) if p.name!="experiment_manifest.json"];manifest={"experiment_id":"lot38_colab_compute","lot":38,"git_commit":git_commit(),"worker_type":"COLAB" if "COLAB_RELEASE_TAG" in os.environ else "LOCAL","hardware":platform.platform(),"device":json.load((a.output/"environment.json").open())["device"],"model_fingerprints":pool_fingerprints(),"engine_fingerprint":engine_fingerprint(),"configuration":json.load((a.output/"configuration.json").open()),"artifact_checksums":{p.name:sha256(p) for p in files}};write_json(a.output/"experiment_manifest.json",manifest)
  with tarfile.open(a.bundle,"w:gz") as tf:
   for p in files+[a.output/"experiment_manifest.json"]:tf.add(p,arcname=f"lot38_colab_compute/{p.name}")
+ (Path(str(a.bundle)+".sha256")).write_text(f"{sha256(a.bundle)}  {a.bundle.name}\n")
  print(a.bundle)
 if __name__=="__main__":
  a=args();{"prepare":prepare,"benchmark":benchmark,"finalize":finalize,"export":export}[a.stage](a)
