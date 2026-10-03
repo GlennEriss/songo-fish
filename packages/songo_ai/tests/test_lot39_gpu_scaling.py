@@ -25,6 +25,7 @@ def test_lot39_resume_and_checksums():
  assert "stage_state.json" in SCRIPT and "artifact_checksums" in SCRIPT
  assert ".partial.json" in SCRIPT and "completed_waves" in SCRIPT
  assert "checkpoint=" in SCRIPT and "flush=True" in SCRIPT
+ assert "resume_code_compatible" in SCRIPT and "RESUME_CRITICAL_FILES" in SCRIPT
 
 def test_lot39_profiles_required_runtime_categories():
  for key in ("engine_s","tree_selection_s","graph_construction_s","tensor_preparation_s","host_to_device_s","model_forward_wall_s","device_to_host_s","backup_s","batch_coordination_s"):
