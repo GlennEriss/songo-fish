@@ -161,3 +161,49 @@ class SongoGraphBuilder:
             action_nodes=torch.stack([graph.action_nodes for graph in graphs]),
         )
 
+    def build_batch_vectorized(self, states: Iterable[RawSongoState]) -> SongoGraphBatch:
+        """Construit le même graphe dense sans créer un objet par état.
+
+        La topologie et les caractéristiques constantes restent strictement
+        identiques à :meth:`build_batch`; seules les colonnes dépendant du
+        plateau et du joueur sont remplies par opérations batchées.
+        """
+
+        states = tuple(states)
+        if not states:
+            raise ValueError("cannot build an empty graph batch")
+        boards = torch.tensor([state.board for state in states], dtype=torch.float32)
+        players = torch.tensor([state.player_to_move for state in states], dtype=torch.long)
+        batch_size = len(states)
+
+        node_features = torch.empty(
+            (batch_size, NUM_NODES, NODE_FEATURE_DIM), dtype=torch.float32
+        )
+        node_features[:, :, 0] = boards[:, :NUM_NODES] / TOTAL_SEEDS
+        owners_p1 = torch.arange(NUM_NODES) < 7
+        node_features[:, :, 1] = owners_p1.to(torch.float32)
+        node_features[:, :, 2] = (~owners_p1).to(torch.float32)
+        node_features[:, :, 3] = (
+            owners_p1.unsqueeze(0) == (players == PLAYER_ONE).unsqueeze(1)
+        ).to(torch.float32)
+        node_indices = torch.arange(NUM_NODES, dtype=torch.float32)
+        local_positions = torch.arange(NUM_NODES, dtype=torch.float32).remainder(7)
+        node_features[:, :, 4] = node_indices / (NUM_NODES - 1)
+        node_features[:, :, 5] = local_positions / 6.0
+        node_features[:, :, 6] = (local_positions == 6).to(torch.float32)
+        node_features[:, :, 7] = (6.0 - local_positions) / 6.0
+
+        global_features = torch.empty((batch_size, GLOBAL_FEATURE_DIM), dtype=torch.float32)
+        global_features[:, 0:2] = boards[:, 14:16] / TOTAL_SEEDS
+        global_features[:, 2] = (players == PLAYER_ONE).to(torch.float32)
+        global_features[:, 3] = (players == PLAYER_TWO).to(torch.float32)
+        global_features[:, 4] = boards[:, :NUM_NODES].sum(dim=1) / TOTAL_SEEDS
+        action_offsets = torch.where(players == PLAYER_ONE, 0, 7).unsqueeze(1)
+        action_nodes = action_offsets + torch.arange(NUM_ACTIONS, dtype=torch.long)
+        return SongoGraphBatch(
+            node_features=node_features,
+            global_features=global_features,
+            edges_by_relation=self._edges,
+            player_to_move=players,
+            action_nodes=action_nodes,
+        )

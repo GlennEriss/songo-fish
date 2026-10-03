@@ -307,6 +307,32 @@ def test_search_many_accepts_terminal_roots_without_network_evaluation():
     assert model.calls == results[1].network_evaluations
 
 
+def test_optimized_cpu_pipeline_is_semantically_identical_to_reference():
+    states = (_state(), _state(PARTIAL_LEGALITY, PLAYER_ONE), _state(P1_IMMEDIATE_WIN, PLAYER_ONE))
+    seeds = (401, 402, 403)
+    config = MCTSConfig(num_simulations=24, add_root_noise=False, seed=401)
+    reference = SongoMCTS(ControlledNetwork(value=0.25), config=config).search_many(
+        states, policy_temperature=0.0, seeds=seeds
+    )
+    optimized = SongoMCTS(
+        ControlledNetwork(value=0.25),
+        config=config,
+        profile_runtime=False,
+        compact_tree_ops=True,
+        fast_engine_rebuild=True,
+        vectorized_graph=True,
+    ).search_many(states, policy_temperature=0.0, seeds=seeds)
+
+    for actual, expected in zip(optimized, reference):
+        assert actual.visit_counts == expected.visit_counts
+        assert actual.policy == expected.policy
+        assert actual.root_q_values == pytest.approx(expected.root_q_values, abs=0.0)
+        assert actual.root_value == pytest.approx(expected.root_value, abs=0.0)
+        assert actual.selected_action == expected.selected_action
+        assert actual.num_nodes == expected.num_nodes
+        assert actual.network_evaluations == expected.network_evaluations
+
+
 def test_mcts_uses_eval_no_grad_and_does_not_modify_model_parameters():
     model = ControlledNetwork(value=0.2)
     model.train()
