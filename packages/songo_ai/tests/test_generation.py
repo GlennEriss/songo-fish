@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import random
 
+import pytest
+
 from songo_ai.generation import (
     generate_trajectories,
     generate_trajectory,
@@ -12,7 +14,7 @@ from songo_ai.generation import (
     sample_positions,
 )
 from songo_ai.generation.sampling import ENDGAME, MIDGAME, OPENING, TIGHT_ENDGAME, classify_phase
-from songo_ai.songo.rules import SongoLegacyGame, assert_invariants
+from songo_ai.songo.rules import IllegalMove, SongoLegacyGame, assert_invariants
 
 
 def test_generate_trajectory_never_records_a_terminal_position() -> None:
@@ -31,6 +33,22 @@ def test_generate_trajectory_move_numbers_are_sequential() -> None:
     move_numbers = [p.move_number for p in positions]
     assert move_numbers == list(range(len(positions)))
     assert all(p.total_moves == len(positions) for p in positions)
+
+
+def test_generate_trajectory_preserves_historical_illegal_action_fallback_by_default() -> None:
+    def illegal_agent(game, rng):
+        return 99
+
+    positions = generate_trajectory(illegal_agent, random.Random(4), max_moves=1)
+    assert len(positions) == 1
+
+
+def test_generate_trajectory_strict_mode_rejects_illegal_agent_action() -> None:
+    def illegal_agent(game, rng):
+        return 99
+
+    with pytest.raises(IllegalMove, match="agent returned illegal local action 99"):
+        generate_trajectory(illegal_agent, random.Random(4), max_moves=1, strict_actions=True)
 
 
 def test_generate_trajectories_uses_distinct_trajectory_ids() -> None:

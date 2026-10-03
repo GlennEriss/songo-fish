@@ -12,7 +12,7 @@ from typing import List, Optional
 
 from .agents import Agent
 from songo_ai.songo.fast_rules import FastSongoGame
-from songo_ai.songo.rules import State
+from songo_ai.songo.rules import IllegalMove, State
 
 
 @dataclass(frozen=True)
@@ -29,6 +29,7 @@ def generate_trajectory(
     max_moves: int = 400,
     game_factory=FastSongoGame.initial,
     trajectory_id: Optional[str] = None,
+    strict_actions: bool = False,
 ) -> List[TrajectoryPosition]:
     """Joue une partie complete et renvoie chaque position AVANT chaque coup
     (jamais la position terminale : section 6.6, "aucune position
@@ -43,7 +44,13 @@ def generate_trajectory(
     `trajectory_id` : fourni par `generate_trajectories` de facon
     deterministe (seed + index) pour que deux runs -- ou une reprise --
     donnent des identifiants identiques ; un UUID aleatoire par defaut pour
-    les appels directs isoles."""
+    les appels directs isoles.
+
+    `strict_actions=False` preserve le comportement historique : une action
+    illegale emise par un agent est remplacee par la premiere action legale.
+    `strict_actions=True` est le contrat destine au futur pipeline RL : une
+    action illegale est une erreur de l'agent et provoque une exception, sans
+    substitution silencieuse."""
 
     if trajectory_id is None:
         trajectory_id = uuid.uuid4().hex[:12]
@@ -59,6 +66,10 @@ def generate_trajectory(
         raw_positions.append(game.to_state())
         local_action = agent(game, rng)
         if local_action not in legal:
+            if strict_actions:
+                raise IllegalMove(
+                    f"agent returned illegal local action {local_action}; legal actions are {legal}"
+                )
             local_action = legal[0]
         game.play_local(local_action)
         moves_played += 1
@@ -71,7 +82,12 @@ def generate_trajectory(
 
 
 def generate_trajectories(
-    agent_factory, num_trajectories: int, seed: int = 0, max_moves: int = 400, game_factory=FastSongoGame.initial
+    agent_factory,
+    num_trajectories: int,
+    seed: int = 0,
+    max_moves: int = 400,
+    game_factory=FastSongoGame.initial,
+    strict_actions: bool = False,
 ) -> List[TrajectoryPosition]:
     """`agent_factory(rng) -> Agent` : permet de tirer un agent (donc un
     style/une profondeur) different par partie, tout en restant
@@ -82,6 +98,13 @@ def generate_trajectories(
         agent = agent_factory(rng)
         tid = hashlib.sha1(f"{seed}:{index}".encode()).hexdigest()[:12]
         positions.extend(
-            generate_trajectory(agent, rng, max_moves=max_moves, game_factory=game_factory, trajectory_id=tid)
+            generate_trajectory(
+                agent,
+                rng,
+                max_moves=max_moves,
+                game_factory=game_factory,
+                trajectory_id=tid,
+                strict_actions=strict_actions,
+            )
         )
     return positions
