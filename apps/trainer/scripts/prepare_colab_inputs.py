@@ -6,10 +6,11 @@ from colab_drive import atomic_copy_verified,detect_google_drive_root,ensure_lay
 from run_srn_colab_benchmark import git_commit,pool_fingerprints,engine_fingerprint
 LOT38_FILES=(Path("data/experiments/lot35_generator_pool/g4_champion_identity.json"),Path("data/experiments/lot34r_g4_retry/checkpoints/pool/step-06000.pt"),Path("data/experiments/lot34r_g4_retry/checkpoints/pool/step-12000.pt"))
 LOT39_POSITION_FILE=Path("data/colab_bridge/lot39_benchmark_positions.json")
+LOT40_REFERENCE_FILES=(Path("data/colab_bridge/lot40_reference/lot39_scaling_256.json"),Path("data/colab_bridge/lot40_reference/lot39_decision.json"))
 def main():
  p=argparse.ArgumentParser();p.add_argument("--experiment",required=True);p.add_argument("--sync-to-drive",action="store_true");p.add_argument("--drive-root");p.add_argument("--output-dir",type=Path,default=Path("data/colab_bridge"));a=p.parse_args()
- if a.experiment not in ("lot38","lot39"):raise ValueError("supported experiments: lot38, lot39")
- experiment_files=LOT38_FILES if a.experiment=="lot38" else LOT38_FILES+(LOT39_POSITION_FILE,)
+ if a.experiment not in ("lot38","lot39","lot40"):raise ValueError("supported experiments: lot38, lot39, lot40")
+ experiment_files=LOT38_FILES if a.experiment=="lot38" else LOT38_FILES+(LOT39_POSITION_FILE,) if a.experiment=="lot39" else LOT38_FILES+(LOT39_POSITION_FILE,)+LOT40_REFERENCE_FILES
  for f in experiment_files:
   if not f.is_file():raise FileNotFoundError(f)
  a.output_dir.mkdir(parents=True,exist_ok=True);bundle=a.output_dir/f"{a.experiment}_inputs.tar.gz";manifest_path=a.output_dir/f"{a.experiment}_inputs_manifest.json"

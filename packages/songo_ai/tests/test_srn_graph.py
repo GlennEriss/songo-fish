@@ -81,3 +81,24 @@ def test_graph_builder_rejects_empty_batch_and_unimplemented_relations():
     with pytest.raises(ValueError, match="not implemented"):
         SongoGraphBuilder(("next", "dynamic_sowing"))
 
+
+def test_vectorized_graph_builder_is_bitwise_equivalent_to_reference_batch():
+    states = [
+        RawSongoState(tuple([5] * 14 + [0, 0]), PLAYER_ONE),
+        RawSongoState((1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 0, 1, 2, 3, 4, 5), PLAYER_TWO),
+    ]
+    builder = SongoGraphBuilder()
+    reference = builder.build_batch(states)
+    optimized = builder.build_batch_vectorized(states)
+
+    assert torch.equal(reference.node_features, optimized.node_features)
+    assert torch.equal(reference.global_features, optimized.global_features)
+    assert torch.equal(reference.player_to_move, optimized.player_to_move)
+    assert torch.equal(reference.action_nodes, optimized.action_nodes)
+    for relation in BASE_RELATIONS:
+        assert torch.equal(reference.edges_by_relation[relation], optimized.edges_by_relation[relation])
+
+
+def test_vectorized_graph_builder_rejects_empty_batch():
+    with pytest.raises(ValueError, match="empty"):
+        SongoGraphBuilder().build_batch_vectorized([])

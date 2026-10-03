@@ -242,6 +242,11 @@ class SongoMCTS:
         model: nn.Module,
         graph_builder: Optional["SongoGraphBuilder"] = None,
         config: Optional[MCTSConfig] = None,
+        *,
+        profile_runtime: bool = True,
+        compact_tree_ops: bool = False,
+        fast_engine_rebuild: bool = False,
+        vectorized_graph: bool = False,
     ) -> None:
         if graph_builder is None:
             # Import differe : le depot historique fait transiter
@@ -252,6 +257,10 @@ class SongoMCTS:
         self.model = model
         self.graph_builder = graph_builder
         self.config = config or MCTSConfig()
+        self.profile_runtime = bool(profile_runtime)
+        self.compact_tree_ops = bool(compact_tree_ops)
+        self.fast_engine_rebuild = bool(fast_engine_rebuild)
+        self.vectorized_graph = bool(vectorized_graph)
         self.last_profile: dict[str, float | int | list[int]] = {}
 
     def search(self, state: "RawSongoState", *, policy_temperature: float = 1.0) -> MCTSResult:
@@ -464,7 +473,11 @@ class SongoMCTS:
                         path: list[tuple[MCTSNode, int]] = []
                         while node.expanded and not node.terminal:
                             selection_started = time.perf_counter()
-                            action = select_puct_action(node, self.config.c_puct, rngs[index])
+                            action = (
+                                self._select_puct_action_compact(node, rngs[index])
+                                if self.compact_tree_ops
+                                else select_puct_action(node, self.config.c_puct, rngs[index])
+                            )
                             path.append((node, action))
                             child = node.children.get(action)
                             self.last_profile["tree_selection_s"] += (
@@ -472,7 +485,11 @@ class SongoMCTS:
                             )
                             if child is None:
                                 engine_started = time.perf_counter()
-                                child = self._transition(node, action)
+                                child = (
+                                    self._transition_fast(node, action)
+                                    if self.fast_engine_rebuild
+                                    else self._transition(node, action)
+                                )
                                 self.last_profile["engine_s"] += (
                                     time.perf_counter() - engine_started
                                 )
@@ -649,7 +666,8 @@ class SongoMCTS:
                 depth_groups.setdefault(node.search_depth, []).append(index)
             for depth, indices in depth_groups.items():
                 graph_started = time.perf_counter()
-                graph = self.graph_builder.build_batch([nodes[i].state for i in indices])
+                selected_states = [nodes[i].state for i in indices]
+                graph = self._build_batch(selected_states)
                 self._profile_add("graph_construction_s", time.perf_counter() - graph_started)
                 transfer_started = time.perf_counter()
                 graph = graph.to(device)
@@ -664,7 +682,7 @@ class SongoMCTS:
                     values_by_index[original] = values.reshape(-1)[local]
         else:
             graph_started = time.perf_counter()
-            graph = self.graph_builder.build_batch([node.state for node in nodes])
+            graph = self._build_batch([node.state for node in nodes])
             self._profile_add("graph_construction_s", time.perf_counter() - graph_started)
             transfer_started = time.perf_counter()
             graph = graph.to(device)
@@ -716,10 +734,47 @@ class SongoMCTS:
             if isinstance(current, (int, float)):
                 self.last_profile[key] = float(current) + value
 
-    @staticmethod
-    def _synchronize(device: torch.device) -> None:
-        if device.type == "cuda":
+    def _synchronize(self, device: torch.device) -> None:
+        if self.profile_runtime and device.type == "cuda":
             torch.cuda.synchronize(device)
+
+    def _build_batch(self, states):
+        if self.vectorized_graph and hasattr(self.graph_builder, "build_batch_vectorized"):
+            return self.graph_builder.build_batch_vectorized(states)
+        return self.graph_builder.build_batch(states)
+
+    def _select_puct_action_compact(self, node: MCTSNode, rng: random.Random) -> int:
+        """Même PUCT/tie-break que la baseline, sans tuples temporaires Q/scores."""
+        parent_scale = math.sqrt(1.0 + node.total_visits)
+        best_score = float("-inf")
+        tied_actions: list[int] = []
+        for action in range(NUM_ACTIONS):
+            if not node.legal_mask[action]:
+                continue
+            count = node.visit_counts[action]
+            q_value = node.value_sums[action] / count if count else 0.0
+            score = q_value + self.config.c_puct * node.priors[action] * parent_scale / (1 + count)
+            if score > best_score:
+                best_score = score
+                tied_actions = [action]
+            elif score == best_score:
+                tied_actions.append(action)
+        if not tied_actions:
+            raise ValueError("cannot select an action from a node without legal moves")
+        return rng.choice(tied_actions)
+
+    @staticmethod
+    def _transition_fast(parent: MCTSNode, local_action: int) -> MCTSNode:
+        """Reconstruit l'état de recherche sans historique ni revalidation du snapshot."""
+        if parent.terminal:
+            raise ValueError("cannot transition from a terminal node")
+        if not 0 <= local_action < NUM_ACTIONS or not parent.legal_mask[local_action]:
+            raise ValueError(f"illegal local action for MCTS transition: {local_action}")
+        game = SongoLegacyGame(
+            list(parent.state.board), parent.player_to_move, record_history=False
+        )
+        game.play_local(local_action)
+        return SongoMCTS._node_from_game(game, parent.search_depth + 1)
 
     def _trace_entry(
         self,
