@@ -19,7 +19,17 @@ def test_no_training_or_mutation_contract():
  assert ".backward(" not in SCRIPT and "torch.optim" not in SCRIPT
 def test_bundle_checksums_and_strict_import():
  assert "artifact_checksums" in SCRIPT and "experiment_manifest.json" in SCRIPT
+ assert "cannot export before successful finalize" in SCRIPT
  assert "checksum mismatch" in IMPORT and "engine fingerprint mismatch" in IMPORT and "model fingerprint mismatch" in IMPORT
  assert "git commit mismatch" in IMPORT and "unsafe bundle path" in IMPORT
 def test_fingerprint_preservation():
  assert "model_parameter_fingerprint" in SCRIPT and 'before["unchanged"]' in SCRIPT
+
+def test_gpu_only_finalize_is_supported_and_not_misclassified():
+ assert "efficient=None if speed is None" in SCRIPT
+ assert 'under="YES" if efficient is False and beneficial is True' in SCRIPT
+ assert '"INCONCLUSIVE"' in SCRIPT
+
+def test_notebook_stops_export_when_finalize_fails():
+ notebook=(ROOT/"notebooks/songo_colab_compute_benchmark.ipynb").read_text()
+ assert "subprocess.run" in notebook and "check=True" in notebook
