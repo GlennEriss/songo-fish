@@ -34,12 +34,16 @@ FAKE_ID_PREFIXES = ("fake_", "bot_")
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 REPOSITORY_ROOT = SCRIPT_DIR.parents[2]
-DATA_DIR = REPOSITORY_ROOT / "apps" / "data"
+# Deplace depuis apps/data vers data/real_matches (juillet 2026) : toutes
+# les donnees vivent desormais sous data/. Le .jsonl/.json nettoye reste
+# versionne (exception .gitignore) ; les exports Firebase bruts (brutes/,
+# PII) restent ignores.
+DATA_DIR = REPOSITORY_ROOT / "data" / "real_matches"
 DEFAULT_MATCHES = DATA_DIR / "brutes" / "gestion-songo-prod-default-rtdb-matches_live-export.json"
 DEFAULT_EVENTS = DATA_DIR / "brutes" / "gestion-songo-prod-default-rtdb-matches_live_events-export.json"
 DEFAULT_RULES = REPOSITORY_ROOT / "docs" / "songo_legacy_single.py"
-DEFAULT_OUTPUT = DATA_DIR / "ordonnées" / "match_moves_v1.jsonl"
-DEFAULT_JSON_OUTPUT = DATA_DIR / "ordonnées" / "match_moves_v1.json"
+DEFAULT_OUTPUT = DATA_DIR / "match_moves_v1.jsonl"
+DEFAULT_JSON_OUTPUT = DATA_DIR / "match_moves_v1.json"
 
 
 Board = Tuple[int, ...]

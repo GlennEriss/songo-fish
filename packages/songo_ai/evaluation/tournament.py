@@ -14,9 +14,11 @@ n'est pas degenere avant de faire confiance a l'intervalle."""
 
 from __future__ import annotations
 
+import json
 import math
 import random
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Optional, Tuple
 
 from songo_ai.songo.fast_rules import FastSongoGame
@@ -56,18 +58,45 @@ def play_match(
     seed: int = 0,
     max_moves: int = 400,
     opening_random_plies: int = 0,
+    resume_path: Optional[Path] = None,
 ) -> MatchResult:
     """Alterne strictement le joueur qui commence (section 10.2). Chaque
     partie est jouee jusqu'a la fin ou `max_moves`, sur le moteur rapide
     (Numba), sans historique. `opening_random_plies` > 0 recommande des que
     l'un des deux agents est deterministe (cf. avertissement en tete de
-    module) : joue ce nombre de coups aleatoires (via `seed`, donc
-    reproductible) avant de rendre la main aux agents."""
-    rng = random.Random(seed)
+    module) : joue ce nombre de coups aleatoires avant de rendre la main
+    aux agents.
+
+    Chaque partie a son propre RNG (`(seed, game_index)`) : la partie N
+    est identique quels que soient les parties precedentes -- ce qui rend
+    les essais reellement independants (l'intervalle de Wilson le suppose)
+    ET permet la reprise. Si `resume_path` est fourni, l'issue de chaque
+    partie y est ajoutee (JSONL) au fur et a mesure ; un relancement
+    (memes agents/seed/num_games) rejoue les tallies depuis ce fichier et
+    reprend a la premiere partie manquante. Le fichier est supprime a la
+    fin d'un tournoi complet."""
     wins_a = wins_b = draws = 0
     seen_move_sequences: set = set()
+    start_index = 0
 
-    for game_index in range(num_games):
+    resume_path = Path(resume_path) if resume_path is not None else None
+    if resume_path is not None and resume_path.exists():
+        for line in resume_path.read_text().splitlines():
+            if not line.strip():
+                continue
+            rec = json.loads(line)
+            if rec["game_index"] != start_index:
+                break  # fichier incoherent (trou) -> on s'arrete la, le reste sera rejoue
+            wins_a += rec["outcome"] == "a"
+            wins_b += rec["outcome"] == "b"
+            draws += rec["outcome"] == "draw"
+            seen_move_sequences.add((rec["a_starts"], tuple(rec["move_sequence"])))
+            start_index += 1
+        if start_index:
+            print(f"[tournament] reprise : {start_index}/{num_games} parties deja jouees", flush=True)
+
+    for game_index in range(start_index, num_games):
+        rng = random.Random(f"{seed}:{game_index}")
         a_starts = game_index % 2 == 0
         game = FastSongoGame.initial()
         moves_played = 0
@@ -105,13 +134,26 @@ def play_match(
             # Partie tronquee par max_moves sans etre reellement terminee
             # (aucun cote n'a "gagne" cette situation) ou nulle reelle :
             # comptee comme nulle, jamais attribuee arbitrairement a un cote.
+            outcome = "draw"
             draws += 1
         else:
             winner_is_a = (game.winner == PLAYER_ONE) == a_starts
-            if winner_is_a:
-                wins_a += 1
-            else:
-                wins_b += 1
+            outcome = "a" if winner_is_a else "b"
+            wins_a += winner_is_a
+            wins_b += not winner_is_a
+
+        if resume_path is not None:
+            resume_path.parent.mkdir(parents=True, exist_ok=True)
+            with resume_path.open("a") as f:
+                f.write(json.dumps({
+                    "game_index": game_index,
+                    "a_starts": a_starts,
+                    "outcome": outcome,
+                    "move_sequence": move_sequence,
+                }) + "\n")
+
+    if resume_path is not None:
+        resume_path.unlink(missing_ok=True)  # tournoi complet -> plus de reprise a faire
 
     score_a = wins_a + 0.5 * draws
     win_rate_a = score_a / num_games if num_games else 0.0

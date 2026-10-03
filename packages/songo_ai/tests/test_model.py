@@ -116,3 +116,37 @@ def test_train_model_tracks_val_and_saves_best_checkpoint(tmp_path: Path) -> Non
 
     model = SongoNet(dropout=0.1)
     model.load_state_dict(torch.load(checkpoint_path))
+
+
+def test_train_model_resumes_after_a_crash(tmp_path: Path, monkeypatch) -> None:
+    train_shard = tmp_path / "train.jsonl"
+    val_shard = tmp_path / "val.jsonl"
+    _write_tiny_shard(train_shard, n=24, seed=1)
+    _write_tiny_shard(val_shard, n=8, seed=2)
+    resume_path = tmp_path / "model.resume.pt"
+
+    import songo_ai.model.train as train_mod
+
+    real_run_epoch = train_mod._run_epoch
+    calls = {"n": 0}
+
+    def _crash_after_3_epochs(*args, **kwargs):
+        calls["n"] += 1
+        if calls["n"] > 6:  # 3 epoques * (train + val)
+            raise RuntimeError("coupure simulee")
+        return real_run_epoch(*args, **kwargs)
+
+    monkeypatch.setattr(train_mod, "_run_epoch", _crash_after_3_epochs)
+    with pytest.raises(RuntimeError):
+        train_mod.train_model(train_shard, val_shard, epochs=10, batch_size=8, resume_path=resume_path,
+                              early_stopping_patience=None)
+    assert resume_path.exists()
+    saved = torch.load(resume_path)
+    assert saved["epoch"] == 3
+
+    # reprise : sans patch, l'entrainement repart a l'epoque 4 et finit les 10
+    monkeypatch.undo()
+    history = train_mod.train_model(train_shard, val_shard, epochs=10, batch_size=8, resume_path=resume_path,
+                                    early_stopping_patience=None)
+    assert [m.epoch for m in history] == list(range(1, 11))
+    assert not resume_path.exists()  # supprime en fin de run complet

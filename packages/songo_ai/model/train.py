@@ -7,7 +7,9 @@ fonctionnent de bout en bout, en verifiant que le reseau peut memoriser
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+import os
+import sys
+from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import List, Optional
 
@@ -100,6 +102,17 @@ def train_overfit(
     return history
 
 
+def _save_resume(path: Path, payload: dict) -> None:
+    """Ecriture atomique (.tmp puis rename) : un arret brutal PENDANT la
+    sauvegarde laisse l'ancien fichier de reprise intact, jamais un fichier
+    tronque."""
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    torch.save(payload, tmp)
+    os.replace(tmp, path)
+
+
 def train_model(
     train_shard: Path,
     val_shard: Path,
@@ -113,12 +126,19 @@ def train_model(
     device: str = "cpu",
     checkpoint_path: Optional[Path] = None,
     early_stopping_patience: Optional[int] = 10,
+    resume_path: Optional[Path] = None,
 ) -> List[EpochMetrics]:
     """Entrainement "reel" (etape 7, curriculum 100k : "verifier la
     generalisation") : dropout + weight decay plus fermes que
     `train_overfit`, et le checkpoint sauvegarde est celui de la MEILLEURE
     epoque sur le val (pas la derniere), avec arret anticipe si le val ne
-    s'ameliore plus pendant `early_stopping_patience` epoques consecutives."""
+    s'ameliore plus pendant `early_stopping_patience` epoques consecutives.
+
+    `resume_path` : si fourni, l'etat complet (poids, optimiseur, meilleure
+    epoque, historique) est sauvegarde apres CHAQUE epoque et, s'il existe
+    deja au demarrage, l'entrainement reprend a l'epoque suivante au lieu
+    de repartir de zero. Le fichier est supprime a la fin d'un run complet.
+    """
 
     train_dataset = ObservationDataset(train_shard)
     train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
@@ -132,12 +152,34 @@ def train_model(
     best_val_loss = float("inf")
     best_state = None
     epochs_without_improvement = 0
+    start_epoch = 1
 
-    for epoch in range(1, epochs + 1):
+    signature = {"width": width, "num_blocks": num_blocks, "dropout": dropout}
+    if resume_path is not None and Path(resume_path).exists():
+        ckpt = torch.load(resume_path, map_location=device)
+        if ckpt.get("signature") != signature:
+            print(
+                f"[train] fichier de reprise ignore (architecture differente : "
+                f"{ckpt.get('signature')} != {signature})",
+                file=sys.stderr,
+                flush=True,
+            )
+        else:
+            model.load_state_dict(ckpt["model"])
+            optimizer.load_state_dict(ckpt["optimizer"])
+            best_val_loss = ckpt["best_val_loss"]
+            best_state = ckpt["best_state"]
+            epochs_without_improvement = ckpt["epochs_without_improvement"]
+            history = [EpochMetrics(**m) for m in ckpt["history"]]
+            start_epoch = ckpt["epoch"] + 1
+            print(f"[train] reprise a l'epoque {start_epoch}/{epochs}", file=sys.stderr, flush=True)
+
+    for epoch in range(start_epoch, epochs + 1):
         train_loss, train_top1 = _run_epoch(model, train_loader, optimizer, weights, device)
         val_loss, val_top1 = _run_epoch(model, val_loader, None, weights, device)
         history.append(EpochMetrics(epoch, train_loss, train_top1, val_loss, val_top1))
 
+        stop = False
         if val_loss < best_val_loss:
             best_val_loss = val_loss
             best_state = {k: v.clone() for k, v in model.state_dict().items()}
@@ -145,10 +187,28 @@ def train_model(
         else:
             epochs_without_improvement += 1
             if early_stopping_patience is not None and epochs_without_improvement >= early_stopping_patience:
-                break
+                stop = True
+
+        if resume_path is not None:
+            _save_resume(resume_path, {
+                "signature": signature,
+                "epoch": epoch,
+                "model": model.state_dict(),
+                "optimizer": optimizer.state_dict(),
+                "best_val_loss": best_val_loss,
+                "best_state": best_state,
+                "epochs_without_improvement": epochs_without_improvement,
+                "history": [asdict(m) for m in history],
+            })
+
+        if stop:
+            break
 
     if best_state is not None and checkpoint_path is not None:
         Path(checkpoint_path).parent.mkdir(parents=True, exist_ok=True)
         torch.save(best_state, checkpoint_path)
+
+    if resume_path is not None:
+        Path(resume_path).unlink(missing_ok=True)  # run termine -> plus de reprise a faire
 
     return history

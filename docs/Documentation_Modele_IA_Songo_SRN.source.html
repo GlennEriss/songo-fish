@@ -1,0 +1,2595 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <title>Documentation du modele IA Songo - SRN</title>
+  <style>
+    @page { size: A4; margin: 17mm 16mm 18mm 16mm; }
+    * { box-sizing: border-box; }
+    body {
+      color: #1f2933;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Arial, sans-serif;
+      font-size: 10.5pt;
+      line-height: 1.42;
+      margin: 0;
+    }
+    h1, h2, h3 { color: #102033; line-height: 1.12; margin: 0 0 7pt; }
+    h1 { font-size: 29pt; letter-spacing: .2pt; }
+    h2 { font-size: 17pt; border-bottom: 1px solid #d6dde6; padding-bottom: 4pt; margin-top: 18pt; page-break-after: avoid; }
+    h3 { font-size: 12.5pt; margin-top: 12pt; page-break-after: avoid; }
+    p { margin: 0 0 7pt; }
+    ul, ol { margin: 3pt 0 8pt 17pt; padding: 0; }
+    li { margin: 2pt 0; }
+    table { border-collapse: collapse; width: 100%; margin: 7pt 0 10pt; page-break-inside: avoid; }
+    th, td { border: 1px solid #d7dee8; padding: 5pt 6pt; vertical-align: top; }
+    th { background: #edf2f7; color: #102033; font-weight: 700; }
+    code, pre { font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace; }
+    code { background: #eef2f6; padding: 1pt 3pt; border-radius: 3pt; }
+    pre {
+      background: #f5f7fa;
+      border: 1px solid #d7dee8;
+      border-radius: 5pt;
+      font-size: 8.3pt;
+      line-height: 1.25;
+      margin: 7pt 0 10pt;
+      padding: 7pt 8pt;
+      white-space: pre-wrap;
+      page-break-inside: avoid;
+    }
+    .cover {
+      min-height: 735pt;
+      padding-top: 54pt;
+      position: relative;
+    }
+    .kicker { color: #52616f; font-size: 10pt; font-weight: 700; letter-spacing: 1.2pt; text-transform: uppercase; }
+    .subtitle { color: #52616f; font-size: 14pt; line-height: 1.35; margin-top: 10pt; max-width: 470pt; }
+    .meta { bottom: 28pt; color: #52616f; position: absolute; }
+    .toc { columns: 2; column-gap: 24pt; margin-top: 12pt; }
+    .toc p { break-inside: avoid; margin-bottom: 5pt; }
+    .callout {
+      background: #f7fafc;
+      border-left: 4pt solid #2f6f9f;
+      margin: 8pt 0 10pt;
+      padding: 8pt 9pt;
+      page-break-inside: avoid;
+    }
+    .warning { border-left-color: #b7791f; background: #fffaf0; }
+    .decision { border-left-color: #276749; background: #f0fff4; }
+    .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10pt; }
+    .small { color: #52616f; font-size: 9pt; }
+    .pagebreak { page-break-before: always; }
+    .status { font-weight: 700; white-space: nowrap; }
+    .ok { color: #276749; }
+    .todo { color: #975a16; }
+    .open { color: #2b6cb0; }
+  </style>
+</head>
+<body>
+  <section class="cover">
+    <p class="kicker">Projet Songo - IA autonome</p>
+    <h1>Documentation de conception du modele IA Songo SRN</h1>
+    <p class="subtitle">
+      Architecture proposee, representation relationnelle du Songo, algorithmes du reseau,
+      boucle MCTS - self-play, strategie de corpus, protocole experimental et feuille de route.
+    </p>
+    <div class="callout decision" style="margin-top: 32pt; max-width: 500pt;">
+      <p><strong>Position scientifique du document.</strong> Le SRN est l'architecture proposee, pas une conclusion deja demontree.
+      La documentation explicite ce qui est decide, ce qui reste une hypothese experimentale, et les tests qui devront valider ou
+      remettre en cause le choix relationnel.</p>
+    </div>
+    <div class="meta">
+      <p><strong>Version :</strong> v1.3 - architecture du code existant et adaptation SRN</p>
+      <p><strong>Date :</strong> 23 septembre 2026</p>
+      <p><strong>Fichier :</strong> songo/docs/Documentation_Modele_IA_Songo_SRN.pdf</p>
+    </div>
+  </section>
+
+  <section class="pagebreak">
+    <h2>Table des matieres</h2>
+    <div class="toc">
+      <p>I. Presentation du projet</p>
+      <p>II. Nature structurelle du Songo</p>
+      <p>III. Concepts strategiques: ZT, TS, TR, TM, Bidoua</p>
+      <p>IV. Architecture SRN proposee</p>
+      <p>V. Architecture mathematique</p>
+      <p>VI. Graphe Songo et relations</p>
+      <p>VII. Policy-Value Network</p>
+      <p>VIII. Interface moteur - reseau - recherche</p>
+      <p>IX. MCTS et PUCT</p>
+      <p>X. Strategie d'entrainement</p>
+      <p>XI. Dataset d'apprentissage et contrat d'entrainement</p>
+      <p>XII. Reward, nulles, exploration et curriculum</p>
+      <p>XIII. Architecture du code existant et adaptation cible</p>
+      <p>XIV. Squelette de code</p>
+      <p>XV. Protocole experimental</p>
+      <p>XVI. Validation de l'intelligence strategique</p>
+      <p>XVII. Decisions, hypotheses, validations</p>
+      <p>XVIII. Feuille de route</p>
+      <p>Annexe A. Hyperparametres initiaux</p>
+      <p>Annexe B. Differences avec le code actuel</p>
+      <p>Annexe C. Algorithmes recapitulatifs</p>
+    </div>
+  </section>
+
+  <section class="pagebreak">
+    <h2>I. Presentation generale du projet</h2>
+    <h3>I.1. Contexte et origine du projet</h3>
+    <p>
+      Le Songo est un jeu de strategie dans lequel la decision ne repose pas uniquement sur l'etat instantane du plateau. La
+      distribution des graines dans les cases determine des possibilites de circulation, de transfert, de retour, de capture et
+      d'accumulation dont les consequences peuvent apparaitre plusieurs coups plus tard. Une position doit donc etre appreciee non
+      seulement a partir du nombre de graines presentes dans chaque case, mais aussi a partir des transformations que ces graines
+      peuvent provoquer au cours du jeu.
+    </p>
+    <p>
+      Cette caracteristique constitue le point de depart du present projet. Le developpement de la version numerique du Songo a
+      d'abord conduit a la realisation d'un moteur de jeu deterministe, charge d'appliquer les regles: validation des coups, semis,
+      circulation des graines, captures, transmission, gestion de la famine, changement de joueur et determination de la fin d'une
+      partie. Ce moteur constitue la representation operationnelle du jeu. A partir d'un etat S et d'une action legale a, il permet
+      de calculer exactement l'etat resultant S'.
+    </p>
+    <p>
+      Une premiere intelligence artificielle a ensuite ete construite selon une approche classique de recherche dans l'arbre de jeu,
+      notamment a travers les algorithmes Minimax/Negamax avec elagage Alpha-Beta. Cette approche explore plusieurs suites de coups
+      possibles, evalue les positions obtenues et selectionne une action. Elle a progressivement ete enrichie par des connaissances
+      specifiques au Songo et par des optimisations destinees a ameliorer la profondeur et la qualite de la recherche.
+    </p>
+    <p>
+      Cette premiere generation a permis d'obtenir un adversaire artificiel fonctionnel et de constituer une base importante
+      d'experimentation. Elle presente cependant une limite fondamentale pour l'objectif poursuivi maintenant: l'intelligence
+      strategique depend encore largement de ce que le programmeur a explicitement introduit dans l'algorithme. La fonction
+      d'evaluation, les criteres de comparaison des positions, les heuristiques et certaines connaissances strategiques traduisent
+      necessairement une conception humaine de ce qui constitue une bonne ou une mauvaise position. Le systeme recherche efficacement
+      a l'interieur de ce cadre, mais il ne construit pas encore lui-meme sa propre representation strategique du Songo.
+    </p>
+    <p>
+      Le projet entre donc dans une seconde etape. Il ne s'agit plus seulement d'augmenter la profondeur du Minimax ou d'ajouter de
+      nouvelles heuristiques, mais de rechercher les conditions permettant a une intelligence artificielle d'apprendre par
+      l'experience du jeu. L'objectif est qu'elle puisse jouer un grand nombre de parties, observer les consequences de ses decisions,
+      confronter differentes strategies et ameliorer progressivement son comportement sans que chaque principe strategique doive etre
+      prealablement traduit en regle informatique.
+    </p>
+    <p>
+      Cette orientation est particulierement importante au regard de la nature strategique du Songo. Les travaux conceptuels mobilises
+      dans le projet mettent en evidence une lecture dynamique du plateau a travers la circulation des graines et des notions telles
+      que ZT, TS, TR et TM. Ils introduisent egalement les notions de Bidoua, Yinda-Bidoua et Transport-Bidoua, qui montrent que la
+      valeur strategique d'une case ne peut pas etre deduite de son seul nombre de graines. Ces concepts doivent cependant servir ici
+      a comprendre le probleme et a evaluer l'intelligence obtenue, et non necessairement a fournir directement au futur modele les
+      reponses qu'il devrait apprendre.
+    </p>
+    <p>
+      Cette distinction conduit a un principe central du projet: separer les regles du jeu de l'intelligence qui joue au jeu. Le
+      moteur conserve la responsabilite de tout ce qui peut etre determine exactement: legalite d'un coup, circulation des graines,
+      captures, transmission, famine, etats terminaux et calcul des etats successeurs. Le modele d'apprentissage n'a donc pas vocation
+      a redecouvrir les regles du Songo. Son role est different: il doit apprendre a evaluer les situations produites par ces regles
+      et a developper progressivement une politique de decision strategique.
+    </p>
+    <p>
+      Le passage a l'apprentissage automatique ne signifie pas pour autant que l'architecture du futur modele soit deja connue. Le
+      choix d'un reseau relationnel, d'un reseau convolutif, d'un MLP ou d'une autre representation ne doit pas etre effectue
+      uniquement parce qu'une architecture est couramment utilisee dans les jeux. La conception doit partir de la structure propre du
+      Songo: qu'est-ce qu'une case? quelles informations portent les graines qu'elle contient? quelles relations existent entre les
+      cases? comment representer l'amont, l'aval, les circulations longues, les retours et les transformations produites par un coup?
+      C'est a partir de ces questions que devra etre determinee l'architecture capable d'apprendre efficacement.
+    </p>
+    <p>
+      Le projet s'oriente ainsi vers une approche d'apprentissage par renforcement, dans laquelle le modele pourra progressivement
+      produire ses propres experiences par le jeu, notamment par auto-jeu. Les parties generees constitueront alors la matiere
+      premiere de son apprentissage. Le modele ne sera plus seulement entraine a reproduire les decisions d'un moteur expert: il devra
+      pouvoir ameliorer sa strategie a partir des resultats de ses propres confrontations.
+    </p>
+    <p>
+      Dans cette perspective, les 10 000 positions de Songo deja constituees occupent une place precise. Elles fournissent un
+      laboratoire de positions reelles pour examiner des situations de jeu, tester des representations, verifier le comportement des
+      algorithmes et construire des cas d'evaluation. Elles ne constituent pas le corpus d'entrainement du futur modele autonome. Le
+      futur corpus d'apprentissage devra etre produit par le processus d'apprentissage lui-meme: self-play, recherche, replay buffer,
+      adversaires historiques et positions critiques controlees.
+    </p>
+    <p>
+      Le present travail nait donc du passage entre deux generations d'intelligence artificielle pour le Songo: une premiere
+      generation construite autour d'un moteur de recherche Minimax/Negamax et de connaissances strategiques introduites par le
+      concepteur; puis une seconde generation dans laquelle les regles restent garanties par le moteur, mais ou la representation
+      strategique et la politique de decision doivent etre progressivement apprises par l'experience.
+    </p>
+    <div class="callout decision">
+      <p><strong>Idee directrice.</strong> L'enjeu n'est pas simplement de remplacer Minimax par un reseau neuronal. Il est de
+      determiner quelle representation informatique du Songo permettra a un systeme d'apprentissage de decouvrir, exploiter et
+      eventuellement depasser les strategies actuellement codees a la main, tout en restant strictement conforme aux regles du jeu.</p>
+    </div>
+
+    <h3>I.2. Problematique</h3>
+    <p>
+      Le developpement d'une intelligence artificielle capable de jouer efficacement au Songo pose une difficulte qui depasse la
+      simple recherche du meilleur coup a partir d'une position donnee. Le moteur actuel permet deja de connaitre exactement les coups
+      legaux, d'executer le semis, de determiner les captures, de gerer la transmission et la famine et, grace a Minimax/Negamax,
+      d'explorer les consequences de plusieurs coups successifs. Le probleme n'est donc plus principalement de savoir comment faire
+      jouer une machine au Songo, mais de determiner comment lui permettre d'en apprendre progressivement la strategie.
+    </p>
+    <p>
+      Dans l'approche actuelle, la qualite de la decision depend en partie de la fonction d'evaluation concue par le programmeur. Des
+      elements tels que les graines acquises dans les magasins, la mobilite ou certaines approximations de territoire strategique
+      permettent au moteur de comparer les positions. Cette approche est efficace pour guider la recherche, mais elle introduit
+      necessairement une representation humaine de ce qu'est une position favorable. Le moteur Minimax/Negamax explore et evalue avec
+      une heuristique; le modele autonome recherche doit, lui, apprendre progressivement une representation et une preference
+      strategiques.
+    </p>
+    <p>
+      Or, le Songo presente une difficulte particuliere: la valeur strategique d'une position n'est pas reductible a la valeur
+      individuelle de ses cases. Une case contenant un certain nombre de graines peut produire des consequences tres differentes selon
+      sa position, les cases situees en amont, celles qu'elle pourra atteindre, la possibilite d'un retour, la configuration du
+      territoire adverse ou encore la reponse que l'adversaire pourra apporter. La succession, l'amont, l'aval, la frontiere et la
+      portee longue entre les cases ne sont donc pas des details de representation: ce sont des elements qui participent directement a
+      la valeur strategique d'une position.
+    </p>
+    <p>
+      Il en resulte qu'une representation elementaire du plateau sous la forme d'un simple vecteur de nombres peut contenir toute
+      l'information brute necessaire sans pour autant rendre explicite la structure qui donne un sens strategique a cette information.
+      Deux configurations numeriquement proches peuvent conduire a des dynamiques de jeu tres differentes en fonction des trajectoires
+      de semis, des transferts, des retours et des transformations qu'elles rendent possibles.
+    </p>
+    <p>
+      Cette difficulte apparait egalement dans les concepts strategiques associes au Songo. Les phenomenes de transfert, de retour, de
+      transferts multiples, de Bidoua, de Yinda-Bidoua ou de Transport-Bidoua suggerent qu'une accumulation de graines ne possede pas
+      une valeur fixe et independante de son environnement. La modification d'une seule case peut transformer les possibilites de
+      circulation et modifier la valeur strategique de plusieurs autres cases. Le futur modele doit donc pouvoir apprendre des
+      dependances spatiales, relationnelles et temporelles, sans que toutes ces relations strategiques lui soient donnees sous forme
+      d'heuristiques predefinies.
+    </p>
+    <p>
+      Une deuxieme difficulte apparait alors. Si l'on fournit directement au reseau les concepts strategiques deja elabores, par
+      exemple une mesure calculee du Bidoua ou une evaluation provenant du Minimax, le modele risque de devenir essentiellement un
+      apprenant des connaissances du systeme existant. Il pourrait reproduire efficacement les decisions du moteur expert sans
+      necessairement decouvrir une representation strategique propre. A l'inverse, si aucune structure pertinente du jeu ne lui est
+      fournie, le reseau devra consacrer une partie importante de son apprentissage a reconstruire des relations que le moteur connait
+      deja exactement.
+    </p>
+    <p>
+      Le probleme consiste donc a determiner ou placer la frontiere entre ce qui doit etre calcule et ce qui doit etre appris. Les
+      regles deterministes du jeu n'ont pas besoin d'etre redecouvertes. Pour un etat S et un coup legal a, le moteur sait calculer
+      exactement:
+    </p>
+    <pre>S' = T(S, a)</pre>
+    <p>
+      ou T represente la fonction de transition du Songo. Le reseau n'a donc aucune raison d'apprendre approximativement le semis, la
+      capture ou la legalite d'un coup lorsque ces informations peuvent etre obtenues sans erreur par le moteur. En revanche, le
+      moteur ne doit pas decider a la place du modele quelle strategie est la meilleure. C'est precisement cette connaissance que l'on
+      souhaite faire emerger de l'apprentissage.
+    </p>
+    <p>
+      Une troisieme difficulte concerne la nature de l'apprentissage lui-meme. Un apprentissage exclusivement supervise a partir des
+      decisions du Minimax conduirait naturellement le modele a chercher a reproduire le comportement de ce dernier. Or, l'ambition du
+      projet est differente: le Minimax peut servir de reference, d'adversaire ou d'instrument d'evaluation, mais ne doit pas
+      constituer la verite strategique definitive que le nouveau modele serait charge d'imiter. Le systeme doit progressivement
+      pouvoir produire ses propres experiences de jeu, apprendre des resultats de ses parties et confronter ses nouvelles strategies a
+      celles de ses versions precedentes et du moteur existant.
+    </p>
+    <p>La problematique comporte donc simultanement trois dimensions:</p>
+    <ul>
+      <li><strong>representationnelle</strong>: comment representer une position de Songo de maniere suffisamment riche pour rendre accessibles les relations entre les cases et la circulation des graines;</li>
+      <li><strong>decisionnelle</strong>: comment apprendre a evaluer les positions et a selectionner les actions sans encoder directement dans le reseau les conclusions strategiques du programmeur;</li>
+      <li><strong>d'apprentissage</strong>: comment permettre au modele d'ameliorer cette connaissance par l'experience et l'auto-jeu, tout en utilisant le moteur deterministe pour garantir l'exactitude des regles.</li>
+    </ul>
+    <div class="callout decision">
+      <p><strong>Formulation centrale.</strong> Comment concevoir une intelligence artificielle capable d'apprendre de maniere autonome
+      la dynamique et les strategies propres au Songo, a partir des regles exactes du jeu et de l'experience acquise par le jeu, sans
+      dependre d'une fonction d'evaluation strategique entierement definie par le programmeur?</p>
+    </div>
+    <p>
+      Cette problematique generale entraine une question d'architecture particulierement importante: quelle representation de l'etat du
+      Songo et quelles relations entre les cases faut-il mettre a la disposition du modele pour lui permettre d'apprendre les effets de
+      circulation, de transfert et de temporalite du jeu, tout en laissant emerger de l'apprentissage les notions proprement
+      strategiques?
+    </p>
+    <p>
+      Elle entraine egalement une question d'autonomie: comment organiser l'apprentissage par renforcement et le self-play afin que le
+      modele puisse progressivement ameliorer sa politique de jeu, etre evalue independamment du systeme Minimax existant et,
+      eventuellement, decouvrir des strategies que celui-ci ne contient pas?
+    </p>
+    <p>
+      Ces trois questions - representer, apprendre et decider - structurent la suite de la documentation. Elles ont un avantage
+      important: elles ne presupposent pas encore que le SRN, le GNN, le MCTS ou une architecture particuliere constituent la bonne
+      reponse. Les sections suivantes devront construire puis tester cette reponse.
+    </p>
+
+    <h3>I.3. Objectif general</h3>
+    <p>
+      L'objectif general du projet est de concevoir, developper et valider une intelligence artificielle capable d'apprendre
+      progressivement et de maniere autonome a jouer au Songo, en s'appuyant sur un moteur garantissant l'application exacte des
+      regles du jeu et sur un mecanisme d'apprentissage permettant au modele de construire sa propre representation strategique a
+      partir de l'experience.
+    </p>
+    <p>
+      Il ne s'agit donc pas uniquement de developper une intelligence artificielle capable d'obtenir de bonnes performances face a un
+      joueur humain ou au moteur Minimax/Negamax existant. L'ambition est de mettre en place un systeme dans lequel la competence
+      strategique n'est plus principalement determinee par une fonction d'evaluation concue manuellement, mais emerge progressivement
+      des parties jouees, des consequences des decisions prises et de l'amelioration successive du modele.
+    </p>
+    <p>
+      Le moteur du Songo conserve, dans cette approche, la responsabilite des connaissances deterministes: legalite des actions, semis,
+      circulation des graines, captures, transmission, famine, calcul des etats successeurs et conditions de fin de partie. Le futur
+      modele d'intelligence artificielle doit, quant a lui, apprendre a interpreter strategiquement les etats produits par ce moteur,
+      a evaluer leurs perspectives et a privilegier les actions susceptibles de conduire a de meilleurs resultats.
+    </p>
+    <p>
+      L'objectif implique egalement de rechercher une representation de l'etat adaptee aux caracteristiques propres du Songo. Le
+      modele devra etre capable d'exploiter non seulement la quantite de graines presente dans chaque case, mais aussi les relations
+      entre les cases et les effets potentiels de la circulation des graines, sans que les conclusions strategiques telles que Bidoua,
+      Yinda-Bidoua ou Transport-Bidoua lui soient necessairement imposees comme des regles de decision.
+    </p>
+    <p>
+      A terme, le systeme recherche devra pouvoir generer une part essentielle de ses propres experiences d'apprentissage par auto-jeu,
+      ameliorer successivement sa politique de decision et etre confronte a differentes references, notamment ses versions anterieures
+      et le moteur Minimax/Negamax, afin de mesurer objectivement la progression de ses capacites. Dans cette perspective, le Minimax
+      peut demeurer un instrument de comparaison ou d'evaluation, mais il ne constitue pas la verite strategique finale.
+    </p>
+    <div class="callout decision">
+      <p><strong>Formulation synthetique.</strong> Concevoir et valider une intelligence artificielle autonome du Songo capable
+      d'apprendre, par l'experience et l'auto-jeu, une politique de decision et une representation strategique adaptees a la dynamique
+      propre du jeu, tout en s'appuyant sur un moteur deterministe garantissant l'application exacte de ses regles.</p>
+    </div>
+    <p>
+      Cette formulation reste volontairement generale. Elle ne presuppose ni SRN, ni GNN, ni MCTS. Ces elements seront etudies comme
+      des solutions candidates pour atteindre l'objectif, et non comme l'objectif lui-meme.
+    </p>
+
+    <h3>I.4. Objectifs specifiques</h3>
+    <p>Pour atteindre l'objectif general, le projet poursuit les objectifs specifiques suivants.</p>
+
+    <h3>OS1 - Formaliser le Songo comme environnement d'apprentissage</h3>
+    <p>
+      Definir une representation informatique rigoureuse de l'etat du jeu, des actions possibles, des transitions et des etats
+      terminaux, tout en maintenant le moteur de regles comme autorite deterministe pour la legalite des coups, le semis, les
+      captures, la transmission, la famine et le calcul des resultats. Le reseau ne doit ni modifier l'etat, ni determiner la
+      legalite d'un coup, ni calculer les transitions.
+    </p>
+
+    <h3>OS2 - Identifier les caracteristiques structurelles du Songo pertinentes pour l'apprentissage</h3>
+    <p>
+      Etudier l'organisation du plateau, la circulation des graines, les relations entre cases, les phenomenes de transfert et de
+      retour ainsi que les dependances a courte et longue portee, afin de determiner quelles informations doivent etre representees
+      explicitement et lesquelles peuvent etre decouvertes par le modele au cours de son apprentissage. L'enjeu est notamment de
+      depasser une lecture strictement locale ou purement numerique du plateau.
+    </p>
+
+    <h3>OS3 - Concevoir et comparer plusieurs representations et architectures neuronales</h3>
+    <p>
+      Developper des architectures candidates capables de traiter l'etat du Songo et comparer experimentalement leurs performances.
+      Une representation vectorielle simple pourra servir de reference, tandis que des representations tenant davantage compte des
+      relations entre les cases seront etudiees. L'objectif n'est donc pas de considerer a priori le SRN comme la solution definitive,
+      mais de verifier experimentalement si une architecture relationnelle apporte effectivement un avantage.
+    </p>
+
+    <h3>OS4 - Permettre au modele d'apprendre a evaluer les positions et a selectionner les actions</h3>
+    <p>
+      Developper un mecanisme d'apprentissage permettant a l'intelligence artificielle d'estimer la qualite d'une situation de jeu et
+      d'attribuer des preferences aux differents coups legaux, sans lui demander de reapprendre les mecanismes deterministes deja
+      maitrises par le moteur. Le modele devra ainsi apprendre la strategie, et non les regles du jeu.
+    </p>
+
+    <h3>OS5 - Mettre en place un processus d'apprentissage par renforcement fonde principalement sur l'auto-jeu</h3>
+    <p>
+      Permettre au modele de produire progressivement ses propres experiences en jouant contre lui-meme, d'observer les resultats
+      obtenus et d'utiliser ces experiences pour ameliorer ses decisions au fil des generations. Le corpus principal d'apprentissage
+      devra ainsi provenir des parties produites par le systeme lui-meme et non des 10 000 positions actuellement disponibles, qui
+      restent avant tout un ensemble de positions de laboratoire et d'evaluation.
+    </p>
+
+    <h3>OS6 - Integrer un mecanisme de planification permettant d'anticiper les consequences des decisions</h3>
+    <p>
+      Etudier l'interet d'associer au modele appris un mecanisme de recherche permettant d'examiner plusieurs continuations possibles
+      avant de jouer. Cette dimension est particulierement importante au Songo, ou la valeur d'un coup peut dependre d'une circulation
+      ou d'une reponse adverse apparaissant plusieurs coups plus tard. Le MCTS/PUCT constitue actuellement une hypothese forte, mais
+      son apport devra etre mesure experimentalement plutot que considere comme acquis.
+    </p>
+
+    <h3>OS7 - Favoriser l'emergence d'une connaissance strategique propre au modele</h3>
+    <p>
+      Eviter autant que possible d'imposer au reseau une fonction d'evaluation reproduisant directement les connaissances du moteur
+      expert. Les notions de ZT, TS, TR, TM, Bidoua, Yinda-Bidoua et Transport-Bidoua pourront servir a analyser les comportements
+      appris, a construire des situations de test ou, si necessaire, a experimenter des taches auxiliaires, sans etre considerees
+      d'emblee comme des reponses que le modele doit recevoir en entree.
+    </p>
+
+    <h3>OS8 - Evaluer objectivement la progression et la robustesse de l'intelligence artificielle</h3>
+    <p>
+      Mettre en place un protocole experimental permettant de mesurer les performances du modele contre differentes references:
+      architectures de base, versions anterieures du modele, moteur Minimax/Negamax et ensembles de positions critiques.
+      L'evaluation ne devra pas reposer uniquement sur le taux de victoire, mais egalement examiner la qualite de l'evaluation des
+      positions, la stabilite des decisions et le comportement du modele dans des situations strategiques caracteristiques.
+    </p>
+
+    <h3>OS9 - Verifier que les performances obtenues resultent reellement des choix d'architecture et d'apprentissage</h3>
+    <p>
+      Realiser des experiences controlees et des etudes d'ablation afin de determiner l'utilite reelle des differentes composantes
+      introduites: relations entre cases, mecanismes de circulation, profondeur du reseau, recherche, eventuelles taches auxiliaires
+      et strategie d'entrainement. Il s'agit ainsi de pouvoir expliquer pourquoi une architecture fonctionne mieux qu'une autre et non
+      simplement constater qu'elle gagne davantage.
+    </p>
+
+    <h3>OS10 - Preparer une architecture exploitable dans le jeu Songo existant</h3>
+    <p>
+      Concevoir le systeme de maniere modulaire afin de separer clairement le moteur de regles, le modele neuronal, la recherche,
+      l'auto-jeu, l'entrainement et l'evaluation. A terme, le modele valide devra pouvoir etre integre a l'application Songo,
+      notamment dans l'environnement Unity, sans remettre en cause le moteur de regles existant.
+    </p>
+
+    <div class="callout">
+      <p><strong>Synthese.</strong> Ces objectifs specifiques forment une chaine logique: comprendre le Songo, le formaliser,
+      determiner comment le representer, concevoir plusieurs architectures, apprendre par l'experience, planifier, s'ameliorer par
+      self-play, comparer, valider, puis integrer. A ce stade, la documentation ne declare toujours pas que le SRN est la solution:
+      elle definit d'abord ce que la future intelligence artificielle doit etre capable d'accomplir.</p>
+    </div>
+
+    <h3>I.5. Positionnement du projet: IA, apprentissage par renforcement et genie logiciel</h3>
+    <p>
+      Le projet se situe a l'intersection de trois domaines complementaires: l'intelligence artificielle, l'apprentissage par
+      renforcement et le genie logiciel. Ce positionnement est important, car la realisation d'un joueur autonome de Songo ne releve
+      pas uniquement de l'entrainement d'un reseau neuronal. Elle suppose aussi de formaliser le jeu, de concevoir une architecture
+      d'apprentissage adaptee a sa structure et de construire un systeme logiciel capable de faire fonctionner ensemble le moteur de
+      regles, le modele, la recherche, l'auto-jeu et les mecanismes d'evaluation.
+    </p>
+
+    <p><strong>1. Positionnement en intelligence artificielle</strong></p>
+    <p>
+      Dans sa premiere version, l'intelligence du jeu repose principalement sur une approche d'IA de recherche, dans laquelle
+      Minimax/Negamax explore les suites de coups possibles et utilise une fonction d'evaluation pour comparer les positions. Le
+      systeme actuel constitue donc deja une intelligence artificielle capable de prendre des decisions dans le Songo.
+    </p>
+    <p>
+      La nouvelle etape du projet poursuit toutefois un objectif different. Il ne s'agit plus seulement de rechercher efficacement
+      dans un arbre de jeu dont l'evaluation a ete definie par le concepteur. Il s'agit de construire une intelligence capable
+      d'apprendre progressivement une representation des situations et une politique de decision.
+    </p>
+    <p>Le passage recherche peut ainsi etre resume de la maniere suivante:</p>
+    <pre>IA fondee sur recherche + heuristiques
+        -&gt;
+IA fondee sur apprentissage + experience + planification</pre>
+    <p>
+      Cette evolution ne signifie pas l'abandon du moteur existant. Au contraire, elle conduit a mieux separer les responsabilites.
+      Le moteur demeure responsable des regles exactes du Songo, tandis que le modele apprend la valeur strategique des situations
+      et les preferences entre les actions possibles. Cette separation entre moteur, reseau et recherche constitue l'un des principes
+      fondamentaux de la conception.
+    </p>
+    <p>
+      L'enjeu scientifique porte alors sur la representation de la connaissance strategique. Le modele devra progressivement apprendre
+      qu'une position ne se resume pas au nombre de graines contenues dans les cases. Il devra exploiter les dependances entre celles-ci,
+      les possibilites de circulation et les consequences differees des decisions. Le projet releve ainsi de l'apprentissage de
+      representations applique a un jeu de strategie: transformer un etat brut du Songo en informations utiles a la decision.
+    </p>
+
+    <p><strong>2. Positionnement en apprentissage par renforcement</strong></p>
+    <p>
+      Le projet releve plus precisement de l'apprentissage par renforcement, puisque le modele doit apprendre a prendre des decisions
+      successives dans un environnement et ameliorer son comportement en fonction des resultats obtenus.
+    </p>
+    <p>
+      Dans cette formulation, le Songo constitue l'environnement. A un instant donne, l'agent observe un etat <code>S_t</code>, choisit
+      une action legale <code>a_t</code>, puis le moteur applique exactement cette action et produit un nouvel etat:
+    </p>
+    <pre>S_{t+1} = T(S_t, a_t)</pre>
+    <p>
+      Le processus se poursuit jusqu'a atteindre un etat terminal. Le resultat final de la partie fournit alors le signal
+      d'apprentissage principal:
+    </p>
+    <pre>z = +1  victoire
+    0  partie nulle
+   -1  defaite</pre>
+    <p>
+      Cette orientation est importante: la recompense principale provient du resultat reel de la partie, et non d'une note strategique
+      intermediaire entierement construite a partir des heuristiques du moteur Minimax. Le but est d'eviter de transformer l'evaluation
+      du systeme expert en verite que le nouveau modele serait simplement charge d'imiter.
+    </p>
+    <p>L'apprentissage devra notamment permettre au modele d'acquerir deux capacites complementaires:</p>
+    <pre>pi_theta(a | S)   politique: preference pour les actions disponibles
+V_theta(S)        valeur: estimation des perspectives associees a l'etat</pre>
+    <p>
+      L'auto-jeu, ou self-play, occupe alors une place centrale. Le modele pourra jouer contre lui-meme, produire des trajectoires
+      nouvelles, observer leurs resultats et utiliser ces experiences pour ameliorer ses parametres. Une nouvelle version pourra
+      ensuite produire de nouvelles parties, donnant naissance a un processus iteratif:
+    </p>
+    <pre>Jouer -&gt; Produire des experiences -&gt; Apprendre -&gt; Evaluer -&gt; Jouer a nouveau</pre>
+    <p>
+      Cette boucle correspond a une succession de checkpoints, de parties de self-play, d'un replay buffer, d'un entrainement et
+      d'une evaluation avant promotion ou rejet du nouveau modele. L'objectif est donc bien celui d'une IA qui ameliore progressivement
+      son comportement a partir de l'experience qu'elle produit elle-meme.
+    </p>
+
+    <p><strong>3. Positionnement en genie logiciel</strong></p>
+    <p>
+      La dimension de genie logiciel est tout aussi importante. Le projet ne consiste pas uniquement a experimenter un algorithme
+      d'apprentissage dans un environnement isole. Il vise la realisation d'un systeme d'intelligence artificielle complet, modulaire,
+      testable, reproductible et susceptible d'etre integre au jeu Songo existant.
+    </p>
+    <p>Plusieurs composants logiciels doivent fonctionner ensemble:</p>
+    <pre>Moteur Songo -&gt; Representation -&gt; Modele IA -&gt; Recherche -&gt; Self-play -&gt; Entrainement -&gt; Evaluation</pre>
+    <p>
+      Le premier enjeu de genie logiciel consiste a assurer une separation claire des responsabilites. Le moteur de regles doit rester
+      independant du reseau neuronal. Il doit pouvoir etre teste separement afin de garantir que deux etats identiques soumis a une
+      meme action produisent exactement la meme transition. Le reseau ne doit jamais pouvoir modifier les regles, declarer lui-meme
+      qu'un coup est legal ou simuler approximativement un semis.
+    </p>
+    <p>
+      Le deuxieme enjeu concerne la modularite de l'architecture. Les composants consacres a l'environnement, au reseau, a la recherche,
+      au self-play, a l'entrainement et a l'evaluation doivent pouvoir evoluer independamment. Cette organisation permettra notamment
+      de remplacer une architecture neuronale par une autre sans reecrire le moteur du Songo, ou de comparer deux methodes de recherche
+      en conservant le meme modele.
+    </p>
+    <p>
+      Cette modularite possede egalement une importance experimentale: pour determiner si une amelioration provient reellement du
+      modele, de la representation des etats ou de la recherche, ces composants doivent pouvoir etre actives, remplaces ou supprimes
+      independamment.
+    </p>
+    <p>
+      Le troisieme enjeu est celui de la reproductibilite. Chaque experimentation devra etre associee a une configuration identifiable:
+      version du modele, hyperparametres, budget de recherche, generation du self-play, checkpoint utilise et protocole d'evaluation.
+      La performance d'une version de l'IA devra ainsi pouvoir etre reproduite et comparee objectivement a celle d'une autre.
+    </p>
+    <p>
+      Enfin, le systeme devra etre concu en tenant compte de sa destination finale. L'intelligence artificielle n'a pas vocation a
+      rester uniquement dans un environnement experimental Python. Une fois valide, le modele devra pouvoir etre integre au jeu Songo
+      developpe sous Unity, avec un contrat d'inference stable et des contraintes compatibles avec une utilisation reelle.
+    </p>
+
+    <p><strong>4. Articulation des trois dimensions</strong></p>
+    <p>Ces trois dimensions ne constituent donc pas trois projets independants. Elles correspondent a trois niveaux d'un meme systeme.</p>
+    <p>
+      L'intelligence artificielle repond a la question: quelle representation et quel mecanisme de decision peuvent permettre a la
+      machine de comprendre strategiquement une position de Songo?
+    </p>
+    <p>
+      L'apprentissage par renforcement repond a la question: comment cette intelligence peut-elle acquerir et ameliorer cette competence
+      par l'experience plutot que par la seule programmation d'heuristiques?
+    </p>
+    <p>
+      Le genie logiciel repond a la question: comment construire un systeme fiable, modulaire et reproductible permettant a cette
+      intelligence d'apprendre, d'etre evaluee puis d'etre integree au jeu reel?
+    </p>
+    <p>
+      Le projet Songo peut ainsi etre positionne comme un projet de conception d'un systeme intelligent autonome pour un jeu de
+      strategie, dans lequel le genie logiciel fournit l'infrastructure fiable, l'intelligence artificielle fournit les mecanismes de
+      representation et de decision, et l'apprentissage par renforcement fournit le processus par lequel cette intelligence acquiert
+      progressivement sa competence.
+    </p>
+    <p>
+      Ce positionnement est essentiel pour la suite de la documentation: le choix eventuel du SRN, d'un GNN ou du MCTS ne definit pas
+      la nature du projet. Ce sont des solutions techniques candidates a l'interieur d'un probleme plus general de conception d'une
+      intelligence artificielle autonome adaptee aux caracteristiques particulieres du Songo.
+    </p>
+
+    <h3>I.6. Perimetre et demarche de conception</h3>
+    <p>
+      La presente documentation ne considere pas encore l'architecture SRN comme une verite demontree. Elle la traite comme une
+      hypothese de conception issue de l'analyse du Songo, a comparer a d'autres representations. La demarche retenue consiste donc a
+      partir du jeu, formaliser les contraintes, proposer une architecture, puis valider ou corriger cette proposition par experiences,
+      ablations et evaluation sur positions critiques.
+    </p>
+  </section>
+
+  <section>
+    <h2>II. Nature structurelle du Songo</h2>
+    <h3>1. Etat du jeu</h3>
+    <p>
+      Une position de Songo peut etre representee par 14 cases jouables, deux magasins et le joueur au trait. Dans le code actuel,
+      les observations sont canonicalisees: les cases 0-6 representent toujours le camp du joueur au trait, les cases 7-13 le camp
+      adverse, et les magasins 14-15 les graines deja capturees.
+    </p>
+    <pre>Etat brut:
+S = (x_0, ..., x_13, store_self, store_opp, turn)
+
+Etat canonique pour le reseau:
+X_self = cases 0..6
+X_opp  = cases 7..13
+turn   = implicite: le joueur courant est toujours "self"</pre>
+
+    <h3>2. Circulation des graines</h3>
+    <p>
+      Le Songo est d'abord un jeu de circulation. Jouer une case ne consiste pas seulement a vider une case et capturer localement.
+      Le coup produit un trajet, traverse des zones, peut revenir, modifie les nombres de graines en cascade, cree ou detruit des
+      possibilites de capture et change parfois la capacite de transmission.
+    </p>
+    <p>
+      Cela rend insuffisante une lecture purement vectorielle du plateau. Deux positions avec des compteurs proches peuvent produire
+      des consequences tres differentes si les graines d'une case atteignent une zone critique, alimentent une case adverse, ou
+      transforment un futur Bidoua en Yinda-Bidoua.
+    </p>
+
+    <h3>3. Relations spatiales et dynamiques</h3>
+    <p>Les relations pertinentes ne sont pas seulement le voisinage immediat. On distingue notamment:</p>
+    <ul>
+      <li>la relation de succession dans le sens de semis;</li>
+      <li>la relation amont: les cases dont les graines peuvent alimenter une case cible;</li>
+      <li>la relation aval: les cases qui seront touchees par les graines d'une case source;</li>
+      <li>la relation de frontiere entre territoires;</li>
+      <li>la relation de symetrie canonique entre camps;</li>
+      <li>la relation de portee longue lorsque le nombre de graines depasse la distance locale.</li>
+    </ul>
+
+    <div class="callout warning">
+      <p><strong>Point important.</strong> Dire "GNN parce que le jeu est relationnel" est trop faible. La bonne question est:
+      quelles relations du Songo doivent etre exposees au reseau, et lesquelles doivent etre laissees a l'apprentissage?</p>
+    </div>
+
+    <h3>4. Consequence pour l'IA</h3>
+    <p>
+      Un reseau adapte au Songo doit donc recevoir plus qu'une liste de compteurs. Il doit pouvoir distinguer une graine qui dort
+      dans une case neutre d'une graine qui, apres circulation, alimente une menace. Il doit aussi comprendre qu'un coup peut etre
+      faible a l'echelle immediate mais fort a l'echelle de deux ou trois transformations. C'est exactement la raison d'etre du
+      graphe: representer les dependances entre cases avant de demander au reseau de choisir.
+    </p>
+  </section>
+
+  <section>
+    <h2>III. Concepts strategiques: ZT, TS, TR, TM, Bidoua</h2>
+    <h3>1. ZT, TS, TR, TM</h3>
+    <p>
+      Les categories ZT, TS, TR et TM sont utiles pour penser le plateau comme un systeme dynamique. Elles ne doivent pas
+      obligatoirement devenir des entrees directes du reseau, mais elles fournissent un vocabulaire de validation: si le reseau
+      comprend le Songo, ses representations internes devraient differencier les regimes de circulation et de mobilite.
+    </p>
+    <table>
+      <tr><th>Concept</th><th>Role dans la documentation</th><th>Usage initial propose</th></tr>
+      <tr><td>ZT</td><td>Zone ou le mouvement a peu ou pas d'effet strategique immediat.</td><td>Etiquette d'analyse, pas entree obligatoire.</td></tr>
+      <tr><td>TS</td><td>Zone sensible, susceptible de modifier une sequence proche.</td><td>Cas de test et tache auxiliaire optionnelle.</td></tr>
+      <tr><td>TR</td><td>Zone de retour ou la circulation revient influencer le territoire.</td><td>Relation de portee longue a tester.</td></tr>
+      <tr><td>TM</td><td>Zone de mutation ou une case devient grenier, menace ou pivot.</td><td>Validation des embeddings et positions critiques.</td></tr>
+    </table>
+
+    <h3>2. Bidoua</h3>
+    <p>
+      Dans l'etat actuel du moteur expert, un fait operationnel a ete ajoute: une case a 5 graines ou plus est hors de portee de la
+      capture 2-4 tant que son proprietaire ne la joue pas. Cette idee a donne naissance au bonus de territoire sur, utilise comme
+      approximation pratique des greniers/Bidoua dans l'evaluation.
+    </p>
+    <pre>safe_territory(camp) = somme des graines des cases du camp telles que graines >= 5
+evaluation ~= 10 * difference_magasins + 3 * difference_territoire_sur + mobilite</pre>
+    <p>
+      Ce bonus est utile dans le moteur expert, mais il ne faut pas necessairement donner "Bidoua" comme entree au SRN. Sinon, on
+      risque de forcer le reseau a reutiliser notre theorie au lieu de tester s'il peut la retrouver ou la depasser.
+    </p>
+
+    <h3>3. Yinda-Bidoua et Transport-Bidoua</h3>
+    <p>
+      Le Yinda-Bidoua peut etre compris comme une modification non lineaire de la valeur d'une accumulation: ajouter une graine ne
+      produit pas toujours un gain proportionnel, et peut parfois diminuer le potentiel strategique d'une case. Le Transport-Bidoua
+      renvoie a la maniere dont une accumulation est creee, deplacee ou rendue exploitable par une sequence de circulation.
+    </p>
+    <p>
+      Ces phenomenes sont precisement ceux qu'une architecture relationnelle doit aider a observer. Ils seront donc utilises pour
+      construire des positions critiques, des ablations et des analyses de representation.
+    </p>
+
+    <h3>4. Utilisation dans l'apprentissage</h3>
+    <table>
+      <tr><th>Concept</th><th>Dans le reseau</th><th>Dans l'evaluation</th></tr>
+      <tr><td>ZT/TS/TR/TM</td><td>Non impose au depart; tache auxiliaire possible.</td><td>Verifier si les embeddings se separent par regime.</td></tr>
+      <tr><td>Bidoua</td><td>Pas entree directe dans v0.1 SRN.</td><td>Positions critiques et analyse des choix.</td></tr>
+      <tr><td>Yinda-Bidoua</td><td>Observe via effet non lineaire d'une graine ajoutee.</td><td>Tester les coups qui detruisent un potentiel.</td></tr>
+      <tr><td>Transport-Bidoua</td><td>Capture par relations dynamiques et MCTS.</td><td>Tester les sequences preparatoires.</td></tr>
+    </table>
+  </section>
+
+  <section class="pagebreak">
+    <h2>IV. Architecture SRN proposee</h2>
+    <h3>1. Vue generale</h3>
+    <p>
+      La question centrale n'est pas seulement de savoir quel type de reseau neuronal utiliser, mais de definir precisement ce que le
+      reseau doit voir, transformer et produire. Pour le Songo, le reseau ne doit pas apprendre a jouer les graines: le moteur connait
+      deja exactement le semis, les captures, les coups legaux et les transitions. Le reseau doit apprendre ce que signifie
+      strategiquement l'organisation des graines dans une position.
+    </p>
+    <p>
+      Une position canonique peut etre notee:
+    </p>
+    <pre>S = (x_0, x_1, ..., x_13, M_self, M_opp)</pre>
+    <p>
+      Le moteur sait calculer exactement <code>T(S, a) = S'</code>. Le reseau doit donc apprendre deux fonctions complementaires:
+    </p>
+    <pre>P_theta(a | S)  quels coups meritent d'etre consideres
+V_theta(S)      qualite strategique de la position pour le joueur au trait</pre>
+    <p>
+      Le Songo Relational Network est l'architecture proposee pour apprendre ces deux fonctions a partir de 14 representations de
+      cases, de relations propres au plateau et d'un contexte global minimal.
+    </p>
+    <pre>Position S
+  |
+  v
+Moteur Songo exact --------------+
+  |                              |
+  | etat canonique + legal mask  |
+  v                              |
+Encodeur SRN                     |
+  |                              |
+  v                              |
+Message passing relationnel      |
+  |                              |
+  +--> Policy action-conditionnee -> pi(a | S) -+-> MCTS/PUCT -> coup joue
+  |
+  +--> Value Head  -> V(S) ------+</pre>
+
+    <h3>2. Transformation generale du reseau</h3>
+    <p>
+      L'algorithme neuronal propose se lit comme une suite de transformations:
+    </p>
+    <pre>S
+-> encodage des cases
+-> relations Songo
+-> propagation relationnelle
+-> representation globale
+-> Policy(S) et Value(S)</pre>
+    <p>
+      Une subtilite importante concerne la Policy. Chaque action correspond a jouer l'une des sept cases du joueur au trait. Il est
+      donc preferable que le score de l'action depende directement de la representation finale de cette case, combinee au contexte
+      global du plateau:
+    </p>
+    <pre>score(a) = f_policy(h_a, h_S)</pre>
+    <p>
+      Cette formulation est plus adaptee au Songo qu'une tete qui produirait simplement sept logits a partir d'un resume global:
+    </p>
+    <pre>(score_0, ..., score_6) = MLP(h_S)</pre>
+    <p>
+      La tete Policy devient ainsi action-conditionnee: elle evalue chaque coup a partir de la case effectivement jouee et de la
+      situation globale.
+    </p>
+
+    <h3>3. Construction des 14 noeuds</h3>
+    <p>
+      Chaque case jouable devient un noeud du graphe:
+    </p>
+    <pre>C_0, C_1, ..., C_13</pre>
+    <p>
+      Le noeud ne contient pas seulement le nombre brut de graines. Il recoit un vecteur descriptif minimal:
+    </p>
+    <pre>X_i = [n_i, camp_i, position_i, distance_frontiere_i]</pre>
+    <p>
+      <code>n_i</code> represente le nombre de graines normalise. Les autres composantes indiquent la position de la case dans le
+      plateau canonique et son appartenance relative. Dans la premiere version, le reseau ne recoit pas directement Bidoua,
+      Yinda-Bidoua, Transport-Bidoua, une valeur Minimax, un score heuristique ou le meilleur coup d'un teacher. Ces notions doivent
+      servir d'abord a l'analyse et a l'evaluation, afin d'eviter de donner au modele une interpretation strategique deja fabriquee.
+    </p>
+
+    <h3>4. Encodage individuel des cases</h3>
+    <p>
+      Chaque vecteur <code>X_i</code> est transforme par un petit encodeur neuronal partage entre les cases:
+    </p>
+    <pre>h_i^0 = NodeEncoder(X_i)</pre>
+    <p>Conceptuellement:</p>
+    <pre>X_i -> Linear -> ReLU -> Linear -> h_i^0</pre>
+    <p>
+      Si la dimension latente retenue est 64, chaque case devient un vecteur de <code>R^64</code>. On obtient donc une representation
+      <code>14 x 64</code>. A ce stade, chaque case est comprise individuellement: elle sait quelle position elle occupe, a quel camp
+      elle appartient et combien de graines elle contient, mais elle ne connait pas encore ses relations avec les autres cases.
+    </p>
+
+    <h3>5. Relations structurelles et dynamiques du Songo</h3>
+    <p>
+      Le coeur de l'architecture est la construction du graphe. Une premiere famille de relations est structurelle et certaine:
+    </p>
+    <pre>NEXT: C_i -&gt; C_{i+1}
+PREV: C_{i+1} -&gt; C_i</pre>
+    <p>
+      Ces relations decrivent le sens de circulation et la possibilite de remonter vers l'amont. Elles constituent la geometrie
+      minimale du plateau.
+    </p>
+    <p>
+      La seconde famille est dynamique. Pour chaque case jouable <code>i</code>, le moteur peut determiner exactement quelles cases
+      seraient affectees si cette case etait jouee. On peut alors introduire une relation:
+    </p>
+    <pre>C_i --dynamic_sowing--&gt; C_j
+si les graines de C_i peuvent atteindre C_j lorsque i est jouee</pre>
+    <p>
+      Cette relation est beaucoup plus riche qu'un simple voisinage: une meme case contenant une graine ou quinze graines ne produit
+      pas le meme graphe dynamique. Elle constitue donc une hypothese experimentale majeure. Elle semble naturelle pour le Songo, mais
+      elle devra etre testee par ablation plutot qu'acceptee comme une verite acquise.
+    </p>
+
+    <h3>6. Message passing Songo</h3>
+    <p>
+      Les blocs relationnels permettent a chaque case de recevoir des informations des cases auxquelles elle est reliee. Pour chaque
+      type de relation <code>r</code>, un message est calcule:
+    </p>
+    <pre>m_{j -> i}^r = phi_r(h_j^k, h_i^k)</pre>
+    <p>
+      Chaque relation possede ses propres parametres. Le reseau peut donc apprendre qu'une information venue d'une case amont, d'une
+      case voisine ou d'une case atteinte par un semis potentiel n'a pas le meme sens strategique.
+    </p>
+    <pre>m_i = sum_r sum_{j in N_r(i)} m_{j -> i}^r
+
+h_i^{k+1} = LayerNorm(
+  h_i^k + Update(h_i^k, m_i, c)
+)</pre>
+    <p>
+      Plusieurs couches de propagation sont necessaires pour representer des dependances plus longues. Une couche capture surtout les
+      relations directes; deux couches permettent de representer des dependances de voisins de voisins; trois ou quatre couches peuvent
+      commencer a modeliser des phenomenes d'amont, de preparation et de transport. Les valeurs <code>K = 2, 3, 4</code> devront donc
+      etre comparees experimentalement.
+    </p>
+
+    <h3>7. Contexte global et representation du plateau</h3>
+    <p>
+      Certaines informations appartiennent au plateau entier plutot qu'a une case. La premiere version doit rester prudente et inclure
+      uniquement les informations fondamentales:
+    </p>
+    <pre>g = [M_self, M_opp, seeds_in_play]</pre>
+    <p>
+      Ces valeurs sont normalisees puis encodees:
+    </p>
+    <pre>c = GlobalEncoder(g)</pre>
+    <p>
+      Apres <code>K</code> propagations, on dispose de <code>h_0^K, ..., h_13^K</code>. Il faut ensuite construire une representation
+      globale <code>h_S</code>. Une moyenne simple est une baseline utile, mais elle peut ecraser les cases strategiquement
+      exceptionnelles. Il faudra donc comparer:
+    </p>
+    <pre>MeanPooling
+AttentionPooling</pre>
+    <p>
+      L'attention permettrait au reseau d'apprendre que certaines cases deviennent plus importantes que d'autres selon la position.
+      La representation globale finale est:
+    </p>
+    <pre>h_S = concat(h_pool, c)</pre>
+
+    <h3>8. Tetes Policy et Value</h3>
+    <p>
+      La tete Value recoit <code>h_S</code> et produit une estimation bornee:
+    </p>
+    <pre>V_theta(S) = tanh(ValueMLP(h_S))</pre>
+    <p>
+      La tete Policy, elle, est calculee action par action. Pour chaque case jouable <code>a</code> dans <code>0..6</code>:
+    </p>
+    <pre>q_a = PolicyMLP(concat(h_a^K, h_S))</pre>
+    <p>
+      Le moteur fournit ensuite le masque legal. Les coups interdits recoivent un score tres negatif, puis la distribution est
+      normalisee:
+    </p>
+    <pre>q_a = -infty si a est illegal
+P_theta(a | S) = exp(q_a) / sum_{b in A(S)} exp(q_b)</pre>
+    <p>
+      Le reseau produit donc:
+    </p>
+    <pre>Network(S) = (P_theta(S), V_theta(S))</pre>
+    <p>
+      La Policy indique les coups qui meritent d'etre explores; la Value estime la qualite de la position. Le choix final peut ensuite
+      etre affine par un mecanisme de planification comme MCTS.
+    </p>
+
+    <h3>9. Algorithme conceptuel complet</h3>
+    <pre>Algorithme SONGO_NETWORK(S)
+Entree:
+  S = position courante du Songo
+Sorties:
+  P = probabilites des actions
+  V = valeur estimee de la position
+
+1. Le moteur canonicalise S.
+2. Le moteur calcule LegalMask(S).
+3. Pour chaque case i = 0..13:
+     X_i = EncodeRawCase(S, i)
+     h_i = NodeEncoder(X_i)
+4. Construire les relations structurelles:
+     NEXT
+     PREV
+5. Construire eventuellement les relations dynamiques
+   de circulation a partir du moteur.
+6. Pour k = 1..K:
+     Pour chaque relation r:
+       calculer les messages entre cases.
+     Pour chaque case i:
+       agreger les messages recus.
+       h_i = Update(h_i, messages)
+7. Encoder les informations globales:
+     c = GlobalEncoder(stores, seeds_in_play)
+8. Construire la representation du plateau:
+     h_pool = Pool(h_0, ..., h_13)
+     h_state = concat(h_pool, c)
+9. VALUE:
+     V = tanh(ValueMLP(h_state))
+10. POLICY:
+     Pour chaque case jouable a = 0..6:
+       score[a] = PolicyMLP(concat(h_a, h_state))
+11. Pour chaque action illegale:
+       score[a] = -infty
+12. P = softmax(score)
+13. Retourner P, V</pre>
+
+    <h3>10. Pourquoi pas un MLP seul?</h3>
+    <p>
+      Un MLP sur 16 compteurs peut apprendre des correlations statistiques et servir de baseline. Il est meme necessaire pour verifier
+      que le SRN apporte un gain reel. Mais il n'exprime pas explicitement la circulation, l'amont, l'aval ou les distances de semis.
+      Il laisse au reseau la charge de reconstruire toute la geometrie du jeu a partir de positions entieres.
+    </p>
+
+    <h3>11. Pourquoi pas figer AlphaZero comme reponse finale?</h3>
+    <p>
+      La boucle Policy-Value + MCTS + self-play est une inspiration forte, mais elle ne suffit pas a definir une architecture
+      scientifique. Le document propose SRN + MCTS comme hypothese principale, puis prevoit des experiences: MLP, SRN sans MCTS,
+      SRN avec relations reduites, budgets MCTS differents, taches auxiliaires, curriculum et evaluation sur positions critiques.
+    </p>
+
+    <h3>12. Architecture action-conditionnee et valeur des successeurs</h3>
+    <p>
+      En plus de V(S), le systeme peut evaluer un coup par son successeur exact:
+    </p>
+    <pre>Q_theta(S, a) ~= V_theta(T(S, a))
+
+T(S, a) est calcule par le moteur de regles, pas par le reseau.</pre>
+    <p>
+      Cette convention est adaptee au Songo parce que les consequences exactes d'un coup sont riches, mais parfaitement calculables.
+      Le reseau n'a pas besoin d'apprendre le semis; il doit apprendre la valeur des positions qui en resultent.
+    </p>
+
+    <h3>13. Lecture algorithmique de la decision</h3>
+    <pre>Algorithme SRN_Decision(S)
+Entree:
+  S: position Songo brute
+Sortie:
+  action choisie
+
+1. S_canon, legal_mask = moteur.canonicalize(S)
+2. G = GraphBuilder.build(S_canon)
+3. logits, value = SRN.forward(G, legal_mask)
+4. priors = softmax(logits masques)
+5. si mode jeu rapide:
+     action = argmax(priors)
+   sinon:
+     pi_mcts = MCTS.search(S_canon, priors, value)
+     action = sample_ou_argmax(pi_mcts)
+6. retourner action</pre>
+    <p>
+      Cette separation rend le systeme testable: si une decision est mauvaise, on peut isoler le probleme dans la representation,
+      dans les poids du reseau, dans le budget MCTS ou dans le protocole d'entrainement.
+    </p>
+  </section>
+
+  <section>
+    <h2>V. Architecture mathematique</h2>
+    <h3>1. Representation de l'etat</h3>
+    <p>Soit un plateau canonique compose de 14 cases jouables. Pour chaque case i, on construit un vecteur:</p>
+    <pre>x_i = [
+  graines_i / 70,
+  proprietaire_i,
+  position_i,
+  distance_frontiere_i,
+  indicateurs_optionnels_i
+]</pre>
+    <p>Le contexte global contient au minimum:</p>
+    <pre>g = [
+  store_self / 70,
+  store_opp / 70,
+  seeds_in_play / 70
+]</pre>
+    <p>
+      Les variables comme la mobilite, une phase proxy ou des indicateurs de menace ne sont pas introduites automatiquement dans la
+      premiere version. Elles pourront etre ajoutees comme variantes experimentales si les resultats montrent que le contexte minimal
+      est insuffisant.
+    </p>
+
+    <h3>2. Graphe relationnel</h3>
+    <p>
+      Le graphe est defini par un ensemble de relations R. Pour chaque relation r, on a un ensemble d'aretes E_r. Une relation peut
+      etre statique, comme "voisin suivant", ou dynamique, comme "atteint par le semis depuis i avec x_i graines".
+    </p>
+    <pre>G(S) = (V, {E_r}_{r in R}, X, g)
+
+V = {0, ..., 13}
+R = {next, prev, upstream, downstream, border, mirror, long_reach, dynamic_sowing}</pre>
+
+    <h3>3. Message passing</h3>
+    <p>Un bloc relationnel peut etre defini conceptuellement ainsi:</p>
+    <pre>m_i^k = sum_{r in R} sum_{j in N_r(i)} phi_r(h_i^k, h_j^k, e_{j,i,r})
+h_i^{k+1} = LayerNorm(h_i^k + psi(h_i^k, m_i^k, g))</pre>
+    <p>
+      Les fonctions phi_r et psi sont apprises. Le nombre de blocs K controle la profondeur de propagation. Dans une premiere version,
+      K doit rester modere afin de pouvoir comparer le gain du graphe sans sur-parametrer.
+    </p>
+
+    <h3>4. Politique, valeur et Q</h3>
+    <pre>h_G = Pool({h_i^K}) concat g
+
+logits_a = PolicyHead(h_G, h_a^K)
+pi_theta(a | S) = softmax(mask_legal(logits))_a
+
+V_theta(S) = tanh(ValueHead(h_G))
+
+Q_theta(S, a) optionnel:
+Q_theta(S, a) = V_theta(T(S, a)) ou ActionHead(h_G, h_a^K)</pre>
+
+    <h3>5. Loss</h3>
+    <pre>L = lambda_p * CE(pi_MCTS, pi_theta)
+  + lambda_v * MSE(z, V_theta)
+  + lambda_aux * L_aux
+  + lambda_reg * ||theta||^2</pre>
+    <p>
+      Dans la phase self-play, z est le resultat reel de la partie. pi_MCTS est la distribution de visites produite par MCTS. Les
+      cibles auxiliaires peuvent porter sur des proprietes de circulation, mais elles doivent etre testees par ablation.
+    </p>
+
+    <h3>6. Algorithme de forward du SRN</h3>
+    <pre>Algorithme SRN_Forward(G, legal_mask)
+Entrees:
+  G.X: features des 14 cases
+  G.g: contexte global
+  G.E_r: aretes par relation
+  legal_mask: actions legales locales
+Sorties:
+  pi_theta: distribution de politique masquee
+  V_theta: valeur scalaire
+
+1. pour chaque case i:
+     h_i^0 = NodeEncoder(x_i)
+2. c = GlobalEncoder(g)
+3. pour k = 0 .. K-1:
+     pour chaque relation r:
+       pour chaque arete j -> i dans E_r:
+         m_{j,i,r} = Message_r(h_j^k, h_i^k)
+     pour chaque noeud i:
+       m_i = somme des messages entrants vers i
+       h_i^{k+1} = LayerNorm(h_i^k + Update(h_i^k, m_i, c))
+4. h_pool = Pool(h_0^K, ..., h_13^K)
+5. h_state = concat(h_pool, c)
+6. V_theta = tanh(ValueHead(h_state))
+7. pour chaque action locale a dans 0..6:
+     logits[a] = PolicyMLP(concat(h_a^K, h_state))
+8. logits[a illegal] = -inf
+9. pi_theta = softmax(logits)
+10. retourner pi_theta, V_theta</pre>
+
+    <h3>7. Signification des tenseurs</h3>
+    <table>
+      <tr><th>Objet</th><th>Forme conceptuelle</th><th>Sens</th></tr>
+      <tr><td>X</td><td>14 x node_dim</td><td>Representation initiale des cases.</td></tr>
+      <tr><td>g</td><td>global_dim</td><td>Magasins, phase, mobilite, contexte global.</td></tr>
+      <tr><td>E_r</td><td>2 x nombre_aretes_r</td><td>Aretes source/destination pour une relation.</td></tr>
+      <tr><td>h_i^k</td><td>hidden_dim</td><td>Representation latente de la case i apres k blocs.</td></tr>
+      <tr><td>h_state</td><td>2 * hidden_dim</td><td>Resume global de la position.</td></tr>
+      <tr><td>pi_theta</td><td>7</td><td>Probabilites sur les coups locaux legaux.</td></tr>
+      <tr><td>V_theta</td><td>1</td><td>Valeur de la position pour le joueur courant.</td></tr>
+    </table>
+  </section>
+
+  <section class="pagebreak">
+    <h2>VI. Graphe Songo et relations</h2>
+    <h3>1. Relations minimales v0.1</h3>
+    <table>
+      <tr><th>Relation</th><th>Description</th><th>Statut</th></tr>
+      <tr><td>next</td><td>Case suivante dans le sens de semis canonique.</td><td><span class="status ok">Decide v0.1</span></td></tr>
+      <tr><td>prev</td><td>Case precedente, utile pour l'amont immediat.</td><td><span class="status ok">Decide v0.1</span></td></tr>
+      <tr><td>mirror</td><td>Case correspondante dans le camp adverse.</td><td><span class="status open">A valider</span></td></tr>
+      <tr><td>border</td><td>Relation proche de la frontiere entre territoires.</td><td><span class="status open">A valider</span></td></tr>
+      <tr><td>dynamic_sowing</td><td>Cases atteintes par le semis de la case source dans l'etat courant.</td><td><span class="status todo">Hypothese forte</span></td></tr>
+      <tr><td>capture_zone</td><td>Cases adverses a 2-4 graines susceptibles d'etre capturees.</td><td><span class="status open">Optionnelle</span></td></tr>
+    </table>
+
+    <h3>2. Relations statiques et dynamiques</h3>
+    <p>
+      Les relations statiques sont constantes pour toutes les positions. Les relations dynamiques dependent du nombre de graines. Les
+      deux familles ne servent pas le meme objectif: les premieres donnent la geometrie du plateau, les secondes donnent le potentiel
+      de circulation actuel.
+    </p>
+    <pre>Relations statiques:
+i -> i+1, i -> i-1, i -> mirror(i)
+
+Relations dynamiques:
+i -> j si j est touchee par le semis actuel depuis i
+i -> j si j est une case adverse capturable apres arrivee
+i -> j si j devient une case de retour ou de transport</pre>
+
+    <h3>3. Pourquoi ne pas injecter directement Bidoua/Yinda?</h3>
+    <p>
+      Il y a deux strategies possibles. La premiere ajoute Bidoua, Yinda et Transport-Bidoua comme features calculees. Elle peut
+      accelerer l'apprentissage, mais elle risque de transformer le reseau en imitateur de notre analyse. La seconde expose les
+      relations de circulation et observe si les concepts emergent. La proposition SRN privilegie la seconde voie, avec des taches
+      auxiliaires optionnelles pour les comparer.
+    </p>
+
+    <h3>4. Algorithme de construction du graphe</h3>
+    <pre>Algorithme BuildGraph(S)
+Entree:
+  S: etat canonique
+Sortie:
+  G: graphe relationnel
+
+1. creer 14 noeuds, un par case jouable
+2. pour chaque case i:
+     x_i = encode_case(S, i)
+3. encoder le contexte global:
+     g = encode_global(stores, mobilite, phase)
+4. ajouter les relations statiques:
+     next: i -> successeur(i)
+     prev: i -> predecesseur(i)
+     mirror: i -> case opposee canonique
+     border: cases proches de la frontiere
+5. pour chaque case source i:
+     si S.legal_mask[i] = vrai:
+       trajet = moteur.trace_sowing(S, i)
+       pour chaque case j touchee par trajet:
+         ajouter i -> j dans dynamic_sowing
+       si une case adverse 2-4 peut etre capturee:
+         ajouter i -> j dans capture_zone
+6. retourner G = (X, g, E_next, E_prev, E_mirror, E_dynamic, ...)</pre>
+
+    <h3>5. Niveau de confiance des relations</h3>
+    <p>
+      Les relations <code>next</code> et <code>prev</code> sont des choix faibles et stables: elles decrivent seulement la geometrie
+      minimale. Les relations dynamiques sont plus ambitieuses: elles injectent au reseau une lecture calculee du trajet potentiel.
+      Elles doivent donc etre testees par ablation. Si retirer <code>dynamic_sowing</code> ne degrade pas le modele, cela signifiera
+      que le reseau reconstruit deja cette information ou que la relation est mal definie.
+    </p>
+  </section>
+
+  <section>
+    <h2>VII. Policy-Value Network</h2>
+    <h3>1. Encodeur de noeuds</h3>
+    <p>
+      Chaque case recoit un vecteur normalise. Les magasins ne sont pas des noeuds jouables dans la version de base: ils entrent dans
+      le contexte global. Cette separation evite de confondre "graines encore circulantes" et "graines definitivement acquises".
+    </p>
+
+    <h3>2. Message passing</h3>
+    <p>
+      Les blocs relationnels propagent l'information entre cases. Cela permet a une case d'integrer progressivement ce qui se trouve
+      en amont, en aval, chez l'adversaire, et dans les zones atteintes par son semis.
+    </p>
+
+    <h3>3. Policy Head</h3>
+    <p>
+      La tete Policy produit 7 logits d'actions locales dans l'etat canonique, mais elle ne doit pas etre reduite a une simple couche
+      appliquee a la representation globale du plateau. Chaque action correspond a jouer une case precise. Le score de l'action doit
+      donc dependre de la representation finale de cette case et du contexte global.
+    </p>
+    <pre>logit_a = PolicyMLP(concat(h_a^K, h_state))
+
+masked_logits[a] = logit_a si legal_mask[a] = 1
+masked_logits[a] = -infty sinon
+pi = softmax(masked_logits)</pre>
+
+    <h3>4. Value Head</h3>
+    <p>
+      La tete Value produit un scalaire dans [-1, +1], du point de vue du joueur courant. La convention recommandee est:
+      +1 victoire, 0 nulle, -1 defaite.
+    </p>
+
+    <h3>5. Tetes auxiliaires optionnelles</h3>
+    <p>
+      Des tetes auxiliaires peuvent predire des proprietes structurelles: categorie ZT/TS/TR/TM, risque de famine, capture immediate,
+      mobilite future, ou indicateurs de circulation. Elles doivent rester optionnelles et etre validees par ablation.
+    </p>
+
+    <h3>6. Algorithme de Policy Head</h3>
+    <pre>Algorithme PolicyHead(H_nodes, h_state, legal_mask)
+Entrees:
+  H_nodes = representations finales h_0^K ... h_13^K
+  h_state = representation globale du plateau
+  legal_mask = coups legaux fournis par le moteur
+
+1. pour a dans 0..6:
+     logits[a] = PolicyMLP(concat(H_nodes[a], h_state))
+2. pour a dans 0..6:
+     si legal_mask[a] = faux:
+       logits[a] = -inf
+3. pi = softmax(logits)
+4. retourner pi</pre>
+    <p>
+      Le masque legal est essentiel: il empeche le reseau de gaspiller de la capacite a apprendre la legalite, qui est deja connue
+      exactement. La Policy apprend seulement la preference entre coups possibles.
+    </p>
+
+    <h3>7. Algorithme de Value Head</h3>
+    <pre>Algorithme ValueHead(h_state)
+1. y = MLP(h_state)
+2. v = tanh(y)
+3. retourner v
+
+Convention:
+  v proche de +1: position favorable au joueur courant
+  v proche de  0: position nulle ou incertaine
+  v proche de -1: position defavorable au joueur courant</pre>
+    <p>
+      Pendant le backup MCTS, la valeur change de signe a chaque changement de joueur. Cette convention evite d'avoir deux Value
+      Heads separees ou une valeur absolue dependante du joueur physique.
+    </p>
+  </section>
+
+  <section>
+    <h2>VIII. Interface moteur - reseau - recherche</h2>
+    <table>
+      <tr><th>Information</th><th>Producteur</th><th>Consommateur</th><th>Regle</th></tr>
+      <tr><td>Etat canonique</td><td>Moteur</td><td>SRN</td><td>Entree stable du reseau.</td></tr>
+      <tr><td>Coups legaux</td><td>Moteur</td><td>Policy/MCTS</td><td>Jamais appris par le reseau.</td></tr>
+      <tr><td>Successeur T(S,a)</td><td>Moteur</td><td>MCTS et Q action-conditionne</td><td>Transition exacte.</td></tr>
+      <tr><td>Prior P(a|S)</td><td>SRN</td><td>MCTS</td><td>Guide l'exploration.</td></tr>
+      <tr><td>Valeur V(S)</td><td>SRN</td><td>MCTS/entrainement</td><td>Estime l'issue.</td></tr>
+      <tr><td>Resultat terminal z</td><td>Moteur</td><td>Training</td><td>Cible Value principale.</td></tr>
+    </table>
+
+    <h3>Pourquoi conserver le moteur exact?</h3>
+    <p>
+      Une erreur de transition dans le Songo peut inverser une sequence. Un semis mal calcule change la case d'arrivee, la capture, la
+      famine ou la transmission. Le moteur de regles doit donc rester independant du reseau, deterministe et teste.
+    </p>
+
+    <h3>Contrat d'inference</h3>
+    <pre>Contrat Environment -> Network
+Input:
+  state_canonical: 16 compteurs ou structure equivalente
+  legal_mask: 7 booleens
+  graph: representation relationnelle derivee de state_canonical
+
+Output:
+  policy_logits: 7 reels avant softmax
+  value: reel dans [-1, +1]
+
+Interdits:
+  le reseau ne modifie jamais l'etat
+  le reseau ne declare jamais un coup legal ou illegal
+  le reseau ne calcule jamais une transition</pre>
+  </section>
+
+  <section class="pagebreak">
+    <h2>IX. MCTS et PUCT</h2>
+    <h3>1. Role de MCTS</h3>
+    <p>
+      Le reseau seul repond a "que vaut cette position?". MCTS repond a "que se passe-t-il si ce coup est joue puis defendu?". Au
+      Songo, cette difference est importante parce que beaucoup de coups ne revelent leur vraie valeur qu'apres une circulation ou
+      une reponse adverse.
+    </p>
+
+    <h3>2. Formule PUCT</h3>
+    <pre>Score(S, a) = Q(S, a)
+            + c_puct * P(S, a) * sqrt(N(S)) / (1 + N(S, a))</pre>
+    <p>
+      Q(S,a) est la valeur moyenne observee par les simulations. P(S,a) vient du SRN. N(S,a) est le nombre de visites du coup. Le
+      moteur calcule tous les successeurs.
+    </p>
+
+    <h3>3. Cibles produites par MCTS</h3>
+    <p>
+      A chaque position de self-play, la distribution des visites devient la cible de Policy. Cela fournit un signal plus riche qu'un
+      simple meilleur coup one-hot.
+    </p>
+    <pre>pi_MCTS(a | S) = N(S,a)^(1/tau) / sum_b N(S,b)^(1/tau)</pre>
+
+    <h3>4. Bruit et exploration</h3>
+    <p>
+      Pendant l'apprentissage, un bruit de Dirichlet peut etre ajoute a la racine pour eviter que le reseau ne repete trop vite ses
+      propres preferences.
+    </p>
+    <pre>P_root = (1 - epsilon) * P_network + epsilon * Dirichlet(alpha)</pre>
+
+    <h3>5. Algorithme MCTS detaille</h3>
+    <pre>Algorithme MCTS_Search(S_root, network, simulations)
+Entree:
+  S_root: position courante
+Sortie:
+  pi_mcts: distribution de visites
+
+1. initialiser racine avec S_root
+2. evaluer racine:
+     P, V = network(S_root)
+     P = ajouter_bruit_dirichlet(P) si self-play
+     expand(root, P)
+3. repeter simulations fois:
+     node = root
+     path = [root]
+     tant que node est developpe et non terminal:
+       choisir a maximisant Q(node,a) + U(node,a)
+       node = child(node,a)
+       ajouter node a path
+     si node est terminal:
+       value = resultat_terminal(node.state)
+     sinon:
+       P, value = network(node.state)
+       expand(node, P)
+     backup(path, value)
+4. pour chaque action a:
+     pi_mcts[a] = visits(root,a) / somme_visites
+5. retourner pi_mcts</pre>
+
+    <h3>6. Backup et changement de perspective</h3>
+    <pre>Algorithme Backup(path, value)
+1. pour node dans path inverse:
+     node.N += 1
+     node.W += value
+     node.Q = node.W / node.N
+     value = -value  # changement de joueur</pre>
+    <p>
+      Le changement de signe est necessaire parce que V(S) est toujours exprimee du point de vue du joueur au trait dans S. Quand on
+      remonte d'un enfant vers son parent, le point de vue change.
+    </p>
+  </section>
+
+  <section>
+    <h2>X. Strategie d'entrainement</h2>
+    <h3>1. Principe retenu: self-play, RL et recherche</h3>
+    <p>
+      Il faut distinguer deux methodes d'entrainement qui ne poursuivent pas exactement le meme objectif. Entrainer le reseau sur des
+      couples <code>(S, best_action_Minimax)</code> releve principalement de l'apprentissage supervise: le modele apprend a imiter les
+      decisions produites par un teacher. Cette approche peut etre utile, mais elle ne doit pas devenir la methode centrale du projet,
+      car l'objectif final est de construire une intelligence capable d'ameliorer sa strategie par sa propre experience.
+    </p>
+    <p>
+      La methode principale retenue pour l'IA autonome du Songo est donc:
+    </p>
+    <pre>Self-play + reinforcement learning + recherche</pre>
+    <p>
+      Le reseau joue des parties, produit des experiences, ces experiences alimentent un replay buffer, puis l'entrainement produit un
+      nouveau reseau. Ce nouveau reseau genere ensuite de nouvelles parties. Le dataset d'apprentissage n'est donc pas un corpus fixe:
+      c'est un corpus vivant, produit par le systeme au fil des generations.
+    </p>
+    <pre>Network_0 -> D_1 -> Network_1 -> D_2 -> Network_2 -> D_3 -> ...</pre>
+
+    <h3>2. Pourquoi le dataset Minimax ne doit pas devenir le corpus principal</h3>
+    <p>
+      Le dataset existant contient des champs utiles comme <code>best_action</code>, <code>policy_target</code>,
+      <code>wdl_target</code> et des evaluations associees au teacher/Minimax. Si l'on entraine principalement le nouveau reseau avec
+      ces donnees, l'objectif implicite devient:
+    </p>
+    <pre>S -> imiter Minimax</pre>
+    <p>
+      Ce n'est pas inutile: cela peut produire une baseline, verifier le pipeline ou fournir un warm-start. Mais ce n'est pas le coeur
+      de l'architecture cible. Les cibles de politique du dataset sont souvent proches d'un one-hot, et les cibles de valeur proviennent
+      du teacher plutot que du resultat reel d'une partie jouee par l'agent. Elles ne doivent donc pas etre confondues avec les labels
+      produits par le self-play.
+    </p>
+
+    <h3>3. Format du vrai dataset RL</h3>
+    <p>
+      Au depart, le reseau <code>Network_theta0</code> peut etre initialise aleatoirement. Sa politique est peu informative et sa valeur
+      n'est pas encore calibree. Le moteur Songo garantit cependant les regles: il interdit les coups illegaux, applique les transitions
+      exactes et detecte la fin de partie.
+    </p>
+    <p>
+      Pendant une partie de self-play, a chaque position <code>S_t</code>, une recherche comme MCTS utilise le reseau et le moteur pour
+      produire une distribution de visites <code>pi_t</code>:
+    </p>
+    <pre>pi_t = [0.03, 0.08, 0, 0.61, 0.17, 0.11, 0]</pre>
+    <p>
+      Cette distribution devient la cible de politique. A la fin de la partie, le resultat terminal donne la cible de valeur:
+    </p>
+    <pre>z_t = +1  si le joueur au trait dans S_t gagne
+z_t =  0  si la partie est nulle
+z_t = -1  si le joueur au trait dans S_t perd</pre>
+    <p>
+      Le format d'une experience d'apprentissage devient donc:
+    </p>
+    <pre>(S_t, LegalMask_t, pi_MCTS_t, z_t)</pre>
+    <p>
+      Le reseau apprend alors simultanement:
+    </p>
+    <pre>P_theta(a | S) -> pi_MCTS
+V_theta(S)     -> z_terminal</pre>
+
+    <h3>4. Difference entre dataset teacher et dataset vivant</h3>
+    <table>
+      <tr><th>Aspect</th><th>Dataset teacher / Minimax</th><th>Dataset RL / self-play</th></tr>
+      <tr><td>Producteur des labels</td><td>Minimax, heuristiques ou teacher.</td><td>Network + MCTS + resultat terminal.</td></tr>
+      <tr><td>Cible Policy</td><td>best_action ou policy_target souvent quasi one-hot.</td><td>Distribution de visites pi_MCTS.</td></tr>
+      <tr><td>Cible Value</td><td>wdl_target derive du teacher.</td><td>Resultat reel z de la partie.</td></tr>
+      <tr><td>Role scientifique</td><td>Baseline, audit, warm-start optionnel.</td><td>Source principale d'apprentissage autonome.</td></tr>
+      <tr><td>Nature du corpus</td><td>Fixe.</td><td>Evolutif, genere a chaque generation.</td></tr>
+    </table>
+
+    <h3>5. Warm-start supervise: option experimentale, pas dependance permanente</h3>
+    <p>
+      Deux options doivent etre comparees plutot que tranchees arbitrairement. La premiere consiste a apprendre entierement depuis un
+      reseau aleatoire:
+    </p>
+    <pre>Random Network -> SelfPlay -> RL</pre>
+    <p>
+      C'est la solution la plus pure scientifiquement, mais les premieres parties peuvent etre faibles et l'apprentissage plus lent.
+      La seconde consiste a utiliser temporairement Minimax pour initialiser le reseau:
+    </p>
+    <pre>Minimax -> Network_0 -> SelfPlay -> RL</pre>
+    <p>
+      Dans ce cas, le teacher sert uniquement de demarreur. Il ne devient pas le professeur permanent du modele. L'experience a mener
+      est donc:
+    </p>
+    <pre>RL_scratch  vs  SupervisedWarmStart + RL</pre>
+    <p>
+      L'evaluation devra verifier si le warm-start accelere simplement l'apprentissage ou s'il enferme le modele dans les limites du
+      teacher.
+    </p>
+
+    <h3>6. Responsabilites du moteur, du reseau et de la recherche</h3>
+    <p>
+      L'apprentissage repose sur une separation stricte de trois responsabilites. Le moteur Songo reste l'autorite deterministe du jeu:
+      pour un etat <code>S</code> et une action legale <code>a</code>, il calcule exactement <code>S' = T(S, a)</code>. Il gere la
+      legalite des coups, le semis, la circulation des graines, les captures, la transmission, la famine, le changement de joueur,
+      les etats terminaux et le resultat final. Le reseau n'apprend donc pas les regles du Songo.
+    </p>
+    <p>
+      Le reseau neuronal produit deux informations: une Policy <code>P_theta(a | S)</code>, qui represente sa preference pour les
+      actions disponibles, et une Value <code>V_theta(S)</code>, qui estime la qualite de la position pour le joueur au trait.
+      La recherche, dont MCTS/PUCT est l'hypothese principale, utilise ces sorties et les transitions exactes du moteur pour explorer
+      plusieurs continuations.
+    </p>
+    <pre>S -> Network(P, V) -> Recherche -> pi -> Selection action -> Moteur -> S'</pre>
+    <p>
+      La distribution <code>pi</code> produite par la recherche devient ensuite une cible d'apprentissage pour la Policy du reseau.
+    </p>
+
+    <h3>7. Exploration pendant les premieres generations</h3>
+    <p>
+      Au debut, les preferences du reseau sont peu fiables. Il serait donc dangereux de toujours selectionner l'action ayant la plus
+      forte probabilite selon un modele encore ignorant. Le systeme doit conserver une capacite d'exploration, notamment dans les
+      premieres generations de self-play.
+    </p>
+    <p>
+      Dans une approche MCTS/PUCT, une solution consiste a perturber les probabilites a la racine par un bruit de Dirichlet:
+    </p>
+    <pre>P'(a) = (1 - epsilon) * P_theta(a | S) + epsilon * eta_a
+eta ~ Dir(alpha)</pre>
+    <p>
+      Cette perturbation n'a pas pour objectif d'ameliorer directement le coup joue. Elle evite que l'agent se limite trop rapidement
+      aux actions actuellement preferees par un reseau encore mal calibre.
+    </p>
+
+    <h3>8. Amelioration de la Policy par la recherche</h3>
+    <p>
+      La Policy brute du reseau et la Policy issue de la recherche ne doivent pas etre confondues. Le reseau fournit d'abord une
+      distribution initiale:
+    </p>
+    <pre>P_theta(S) = [0.20, 0.18, 0.17, 0.15, 0.12, 0.10, 0.08]</pre>
+    <p>
+      Apres plusieurs simulations, la recherche obtient des nombres de visites <code>N(S, a)</code>, par exemple:
+    </p>
+    <pre>N(S, .) = [12, 8, 41, 5, 79, 3, 2]</pre>
+    <p>
+      Ces visites sont converties en cible de Policy:
+    </p>
+    <pre>pi(a | S) = N(S, a)^(1 / tau) / sum_b N(S, b)^(1 / tau)</pre>
+    <p>
+      La recherche agit donc comme un mecanisme d'amelioration de politique:
+    </p>
+    <pre>P_theta -> MCTS/PUCT -> pi</pre>
+
+    <h3>9. Fonction de perte Policy, Value et variante WDL</h3>
+    <p>
+      Une fois les experiences generees, le reseau doit ajuster ses parametres <code>theta</code> pour rapprocher sa Policy de
+      <code>pi_MCTS</code> et sa Value du resultat terminal <code>z</code>:
+    </p>
+    <pre>p_theta(a | S) ~= pi(a | S)
+v_theta(S)     ~= z</pre>
+    <p>
+      La perte de Policy utilise une cross-entropy entre la distribution de recherche et la distribution predite:
+    </p>
+    <pre>L_policy = - sum_{a in A(S)} pi(a | S) * log p_theta(a | S)</pre>
+    <p>
+      Pour la Value, la baseline initiale est une valeur scalaire <code>v_theta(S) in [-1, +1]</code> entrainee par MSE:
+    </p>
+    <pre>L_value = (z - v_theta(S))^2</pre>
+    <p>
+      Une variante a tester consiste a remplacer la Value scalaire par une tete WDL produisant trois probabilites:
+    </p>
+    <pre>P(W | S), P(D | S), P(L | S)</pre>
+    <p>
+      Dans ce cas, le resultat terminal devient une classe et la perte Value devient une cross-entropy:
+    </p>
+    <pre>L_WDL = - sum_{c in {W, D, L}} y_c * log p_theta(c | S)</pre>
+    <p>
+      La position methodologique retenue est donc:
+    </p>
+    <pre>Baseline: Value scalaire + MSE
+Variante experimentale: WDL + Cross-Entropy</pre>
+    <p>
+      La perte globale avec Value scalaire est:
+    </p>
+    <pre>L(theta) = lambda_p * L_policy
+         + lambda_v * L_value
+         + lambda_r * ||theta||_2^2</pre>
+    <p>
+      Avec une tete WDL, le terme <code>L_value</code> est remplace par <code>L_WDL</code>. Les coefficients
+      <code>lambda_p</code>, <code>lambda_v</code>, <code>lambda_w</code> et <code>lambda_r</code> sont des hyperparametres
+      experimentaux.
+    </p>
+
+    <h3>10. Non-convexite, gradient et retropropagation</h3>
+    <p>
+      La convexite doit etre distinguee de la fonction de perte choisie. Une fonction simple comme <code>f(x) = x^2</code> est
+      convexe, mais la perte du reseau Songo depend d'une succession de transformations neuronales: encodage, propagation
+      relationnelle, pooling, Policy, Value et loss. La fonction <code>L(theta)</code>, consideree par rapport a l'ensemble des
+      parametres du reseau profond, est donc generalement non convexe.
+    </p>
+    <p>
+      Apres le calcul de la perte, le systeme calcule le gradient:
+    </p>
+    <pre>grad_theta L</pre>
+    <p>
+      La mise a jour conceptuelle est:
+    </p>
+    <pre>theta_{t+1} = theta_t - eta * grad_theta L</pre>
+    <p>
+      En pratique, la retropropagation calcule les gradients et un optimiseur comme AdamW peut servir de solution initiale.
+    </p>
+    <pre>Forward Pass -> Loss -> Backpropagation -> Gradients -> Optimiseur -> Mise a jour des poids</pre>
+
+    <h3>11. Deux niveaux d'amelioration complementaires</h3>
+    <p>
+      L'architecture d'apprentissage combine deux mecanismes. Le premier ameliore la decision locale: a partir de
+      <code>P_theta</code>, la recherche produit une distribution <code>pi</code> plus informee. Le second ameliore le reseau:
+      a partir des exemples <code>(S, pi, z)</code>, l'optimisation met a jour les parametres.
+    </p>
+    <pre>P_theta -> MCTS/PUCT -> pi
+theta   -> optimisation -> theta'</pre>
+    <p>
+      La boucle complete est donc:
+    </p>
+    <pre>Reseau
+-> Recherche
+-> Meilleures decisions
+-> Parties
+-> Experiences
+-> Optimisation
+-> Meilleur reseau</pre>
+
+    <h3>12. Phases</h3>
+    <table>
+      <tr><th>Phase</th><th>Objectif</th><th>Sortie attendue</th></tr>
+      <tr><td>0. Validation moteur</td><td>Verifier regles, conservation des 70 graines, famine, captures, transmission.</td><td>Moteur fiable.</td></tr>
+      <tr><td>1. Baseline MLP</td><td>Obtenir un pipeline complet simple.</td><td>Reference minimale.</td></tr>
+      <tr><td>2A. RL depuis zero</td><td>Tester l'apprentissage autonome sans teacher.</td><td>Reference scientifique pure.</td></tr>
+      <tr><td>2B. Warm-start supervise optionnel</td><td>Amorcer la politique sans conserver la dependance au teacher.</td><td>SRN initialise a comparer a 2A.</td></tr>
+      <tr><td>3. Self-play + MCTS</td><td>Generer le vrai corpus d'apprentissage.</td><td>Replay buffer vivant et generations.</td></tr>
+      <tr><td>4. Population d'adversaires</td><td>Eviter l'auto-exploitation.</td><td>Robustesse contre anciennes versions.</td></tr>
+      <tr><td>5. Curriculum</td><td>Travailler les situations critiques.</td><td>Progres sur cas difficiles.</td></tr>
+      <tr><td>6. Ablations</td><td>Verifier que les relations SRN apportent un gain.</td><td>Validation scientifique.</td></tr>
+    </table>
+
+    <h3>13. Boucle evolutive</h3>
+    <pre>checkpoint_k
+  -> self-play avec MCTS
+  -> replay buffer
+  -> entrainement de checkpoint_{k+1}
+  -> evaluation contre baseline, Minimax et anciens checkpoints
+  -> promotion ou rejet
+  -> nouvelle generation</pre>
+
+    <p>
+      Le cycle conceptuel complet est:
+    </p>
+    <pre>Network
+-> MCTS
+-> SelfPlay
+-> Dataset (S, pi, z)
+-> Training
+-> New Network</pre>
+
+    <pre>Algorithme ENTRAINEMENT_SONGO_RL
+1. Initialiser le reseau N_0.
+2. Initialiser le Replay Buffer D.
+3. Pour chaque generation g:
+     SELF-PLAY:
+       pour plusieurs parties:
+         initialiser une position S
+         tant que S n'est pas terminal:
+           legal_mask = moteur.legal_actions(S)
+           P, V = Network(S)
+           pi = MCTS_PUCT(S, P, V, moteur)
+           action = selection(pi, temperature)
+           enregistrer (S, legal_mask, pi)
+           S = moteur.play(S, action)
+         z = moteur.result(S)
+         convertir z pour chaque position de la trajectoire
+         ajouter (S_t, legal_mask_t, pi_t, z_t) au buffer
+     TRAINING:
+       pour plusieurs etapes:
+         batch = ReplayBuffer.sample()
+         p_theta, v_theta = Network(batch.S)
+         calculer L_policy, L_value ou L_WDL, regularisation
+         backpropagation
+         optimizer.step()
+     EVALUATION:
+       evaluer contre champion, anciens checkpoints, Minimax et D_LAB
+     PROMOTION:
+       promouvoir seulement si les criteres experimentaux sont satisfaits</pre>
+
+    <h3>14. Promotion d'un checkpoint</h3>
+    <p>
+      Un checkpoint ne doit pas etre promu uniquement parce que sa loss baisse. Il doit progresser en match, rester calibre en Value,
+      conserver une Policy suffisamment diverse et ne pas regresser sur les positions critiques.
+    </p>
+
+    <h3>15. Algorithme de self-play</h3>
+    <pre>Algorithme GenerateSelfPlayGames(network_k, num_games)
+Sortie:
+  experiences: liste de positions d'entrainement
+
+1. experiences = []
+2. pour game_id dans 1..num_games:
+     S = position_initiale_ou_position_curriculum()
+     trajectory = []
+     tant que S non terminal:
+       legal_mask = moteur.legal_actions(S)
+       pi_mcts = MCTS_Search(S, network_k)
+       temperature = schedule_temperature(move_number)
+       action = sample(pi_mcts, temperature)
+       trajectory.append((S, legal_mask, pi_mcts, joueur_au_trait))
+       S = moteur.play(S, action)
+     z_final = moteur.result(S)
+     pour chaque position t dans trajectory:
+       z_t = z_final du point de vue du joueur_au_trait_t
+       experiences.append((S_t, legal_mask_t, pi_mcts_t, z_t))
+3. retourner experiences</pre>
+
+    <h3>16. Algorithme d'entrainement d'une generation</h3>
+    <pre>Algorithme TrainGeneration(network_k, replay_buffer)
+Sortie:
+  candidate network_{k+1}
+
+1. copier network_k vers candidate
+2. pour epoch dans 1..E:
+     pour batch dans replay_buffer.sample_batches():
+       G = BuildGraph(batch.states)
+       pi_pred, v_pred = candidate(G, batch.legal_masks)
+       loss_policy = CE(batch.pi_mcts, pi_pred)
+       loss_value = MSE(batch.z, v_pred)
+       loss_aux = optional_auxiliary_losses(batch)
+       loss = lambda_p * loss_policy
+            + lambda_v * loss_value
+            + lambda_aux * loss_aux
+            + weight_decay
+       backprop(loss)
+       optimizer.step()
+3. retourner candidate</pre>
+
+    <h3>17. Algorithme de promotion</h3>
+    <pre>Algorithme PromoteOrReject(candidate, champion)
+1. evaluer candidate contre champion sur N parties
+2. evaluer candidate contre anciens checkpoints
+3. evaluer candidate contre baseline Minimax/SongoFish
+4. evaluer candidate sur positions critiques
+5. mesurer:
+     win_rate, Elo, calibration Value, entropie Policy,
+     regressions tactiques, cout inference
+6. si candidate depasse les seuils minimaux:
+     promouvoir candidate comme nouveau champion
+   sinon:
+     conserver champion et archiver candidate comme experience</pre>
+  </section>
+
+  <section>
+    <h2>XI. Dataset d'apprentissage et contrat d'entrainement</h2>
+    <h3>1. Principe du contrat de donnees</h3>
+    <p>
+      Le corpus principal d'entrainement n'est pas constitue manuellement et n'est pas annote par Minimax. Il est produit automatiquement
+      pendant les parties de self-play. Pour chaque position effectivement rencontree, le systeme enregistre un exemple:
+    </p>
+    <pre>E_t = (S_t, M_t, pi_t, z_t)</pre>
+    <p>
+      Ces quatre elements n'ont pas le meme statut. <code>S_t</code> est l'entree du reseau. <code>M_t</code> est une contrainte de
+      validite des actions. <code>pi_t</code> est le label de la tete Policy. <code>z_t</code> est le label de la tete Value.
+      Il faut donc eviter de parler indistinctement de tous les champs comme de labels.
+    </p>
+    <pre>S_t -> Policy cible: pi_t
+S_t -> Value cible: z_t</pre>
+
+    <h3>2. Structure conceptuelle d'un exemple</h3>
+    <pre>TrainingExample
++-- state
++-- legal_mask
++-- policy_target
++-- value_target
++-- metadata</pre>
+    <p>
+      Les quatre premiers champs participent directement ou indirectement a l'entrainement. <code>metadata</code> sert a l'analyse,
+      au debogage et a la reproductibilite, mais ne constitue pas une entree strategique du reseau.
+    </p>
+
+    <h3>3. state: etat d'entree du reseau</h3>
+    <p>
+      Le champ <code>state</code> contient l'etat necessaire pour reconstruire exactement la position donnee au reseau:
+    </p>
+    <pre>S_t = (Board_t, Stores_t, Player_t)
+
+board  = [5, 5, 3, 8, 0, 4, 6, 2, 7, 5, 1, 9, 4, 3]
+stores = [4, 4]
+player = 1</pre>
+    <p>
+      Le format reel devra rester coherent avec la representation canonique retenue apres verification de la symetrie du moteur.
+      Le point important est que l'etat brut soit conserve dans le dataset. Les caracteristiques derivees du reseau doivent etre
+      calculees par l'encodeur:
+    </p>
+    <pre>S_t -> Encoder -> X_t</pre>
+    <p>
+      Cela evite de figer definitivement le dataset sur une version particuliere de l'architecture neuronale.
+    </p>
+
+    <h3>4. legal_mask: contrainte de validite, pas label</h3>
+    <p>
+      Le Songo possede au maximum sept actions locales pour le joueur courant. Le moteur fournit donc un masque:
+    </p>
+    <pre>M_t in {0, 1}^7
+M_t = [1, 1, 0, 1, 1, 0, 1]</pre>
+    <p>
+      Cet exemple signifie que les actions 0, 1, 3, 4 et 6 sont legales, tandis que 2 et 5 sont interdites. Le legal mask n'est pas
+      un label a apprendre: le reseau n'a pas pour objectif de predire la legalite. Il sert a imposer une probabilite nulle aux coups
+      interdits.
+    </p>
+    <pre>logit'_a = logit_a  si M_a = 1
+logit'_a = -inf     si M_a = 0
+
+p_theta(a | S) = Softmax(logit')</pre>
+
+    <h3>5. policy_target: label de la tete Policy</h3>
+    <p>
+      Le champ <code>policy_target</code>, note <code>pi_t</code>, contient sept valeurs, une par action locale. Il ne contient pas le
+      best_action de Minimax. Il contient la distribution issue des visites de MCTS:
+    </p>
+    <pre>pi_t(a) = N(S_t, a)^(1 / tau) / sum_b N(S_t, b)^(1 / tau)</pre>
+    <p>Par exemple:</p>
+    <pre>policy_target = [0.03, 0.07, 0.00, 0.55, 0.24, 0.00, 0.11]</pre>
+    <p>
+      La somme des probabilites vaut 1 et les actions illegales ont une probabilite nulle. Cette distribution est plus riche qu'un
+      simple one-hot <code>best_action = 3</code>, car elle conserve l'information que d'autres coups ont aussi recu de l'attention
+      pendant la recherche.
+    </p>
+
+    <h3>6. value_target: label de la tete Value</h3>
+    <p>
+      Le champ <code>value_target</code>, note <code>z_t</code>, est le second label. Dans la baseline Value scalaire:
+    </p>
+    <pre>z_t = +1  victoire du joueur represente dans S_t
+z_t =  0  partie nulle
+z_t = -1  defaite du joueur represente dans S_t</pre>
+    <p>
+      Ce label ne provient ni de Minimax, ni de MCTS, ni de la Value du reseau. Il provient du resultat reel de la partie.
+    </p>
+    <pre>pi_t = produit par MCTS
+z_t  = produit par le resultat terminal</pre>
+
+    <h3>7. Perspective du joueur</h3>
+    <p>
+      La perspective du joueur est critique. Si la partie est gagnee par le joueur 1, une position representee du point de vue du
+      joueur 1 recoit <code>z = +1</code>, tandis qu'une position representee du point de vue du joueur 2 recoit <code>z = -1</code>.
+      Si le reseau voit toujours la position du point de vue du joueur au trait, alors la cible doit etre calculee dans cette meme
+      perspective.
+    </p>
+    <pre>z_t = +1 si winner = playerPerspective_t
+z_t =  0 si draw
+z_t = -1 si winner != playerPerspective_t</pre>
+    <p>
+      Une erreur sur cette conversion rendrait la tete Value incoherente et pourrait compromettre l'apprentissage.
+    </p>
+
+    <h3>8. Finalisation a la fin de la partie</h3>
+    <p>
+      Pendant la partie, le systeme connait immediatement <code>S_t</code>, <code>M_t</code> et <code>pi_t</code>, mais il ne connait
+      pas encore <code>z_t</code>. Il doit donc conserver temporairement:
+    </p>
+    <pre>(state, legal_mask, policy_target, player_perspective)</pre>
+    <p>
+      Lorsque le resultat terminal est connu, le systeme revient sur la trajectoire et complete chaque exemple avec son
+      <code>value_target</code>.
+    </p>
+    <pre>(S_0, M_0, pi_0, ?) -> (S_0, M_0, pi_0, z_0)
+(S_1, M_1, pi_1, ?) -> (S_1, M_1, pi_1, z_1)</pre>
+
+    <h3>9. Variante WDL sans regenerer les parties</h3>
+    <p>
+      Si une tete WDL est testee, il n'est pas necessaire de regenerer les parties si le resultat terminal et la perspective ont ete
+      conserves correctement. Le scalaire peut etre transforme en classe:
+    </p>
+    <pre>z = +1 -> y = [1, 0, 0]
+z =  0 -> y = [0, 1, 0]
+z = -1 -> y = [0, 0, 1]</pre>
+
+    <h3>10. Metadonnees conservees hors entree reseau</h3>
+    <p>
+      Les metadonnees servent au diagnostic, a l'audit et a la reproductibilite. Elles ne doivent pas automatiquement devenir des
+      caracteristiques d'entree du reseau.
+    </p>
+    <pre>metadata:
+  game_id
+  ply
+  generation
+  checkpoint_id
+  player
+  winner
+  final_score
+  mcts_simulations
+  temperature
+  root_visit_counts
+  root_value</pre>
+
+    <h3>11. Format conceptuel d'un enregistrement</h3>
+    <pre>{
+  "state": {
+    "board": [5, 5, 3, 8, 0, 4, 6, 2, 7, 5, 1, 9, 4, 3],
+    "stores": [4, 4],
+    "player": 1
+  },
+  "legal_mask": [1, 1, 0, 1, 1, 0, 1],
+  "policy_target": [0.03, 0.07, 0.00, 0.55, 0.24, 0.00, 0.11],
+  "value_target": 1,
+  "metadata": {
+    "game_id": 15284,
+    "ply": 27,
+    "generation": 12,
+    "checkpoint_id": "songo_g12",
+    "mcts_simulations": 400,
+    "temperature": 1.0
+  }
+}</pre>
+    <p>
+      Ces nombres illustrent un format conceptuel, pas des parametres definitifs. Le format physique de stockage, JSONL, NumPy,
+      Parquet ou shards binaires, reste une decision d'implementation.
+    </p>
+
+    <h3>12. Ce qui ne doit pas etre label principal</h3>
+    <p>
+      Le dataset RL principal n'utilise pas comme labels principaux:
+    </p>
+    <pre>best_action_minimax
+minimax_score
+teacher_value
+bidoua_score
+yinda_score
+heuristic_score
+safe_territory_score</pre>
+    <p>
+      Ces informations peuvent exister dans un corpus experimental separe et servir a analyser ce que le reseau apprend. Le contrat
+      d'apprentissage principal reste:
+    </p>
+    <pre>LABELS = {pi_MCTS, z_terminal}</pre>
+
+    <h3>13. Passage du dataset au reseau</h3>
+    <p>
+      Pour un mini-batch <code>B = {(S_i, M_i, pi_i, z_i)}</code>, le reseau recoit <code>S_i</code> et le masque <code>M_i</code>.
+      Il produit des logits de politique et une valeur:
+    </p>
+    <pre>logits_i, v_i = Network(S_i)
+p_i = Softmax(mask(logits_i, M_i))
+
+comparer p_i a pi_i
+comparer v_i a z_i</pre>
+    <p>
+      C'est le coeur du code d'entrainement. Le reseau apprend la distribution de recherche <code>pi_MCTS</code>, pas seulement
+      l'action effectivement jouee.
+    </p>
+
+    <h3>14. Train step conceptuel</h3>
+    <pre>def train_step(model, optimizer, batch, device):
+    states = batch["state"].to(device)
+    legal_mask = batch["legal_mask"].to(device)
+    policy_target = batch["policy_target"].to(device)
+    value_target = batch["value_target"].to(device)
+
+    policy_logits, value_pred = model(states)
+    masked_logits = policy_logits.masked_fill(
+        ~legal_mask.bool(),
+        float("-inf")
+    )
+    log_policy = torch.log_softmax(masked_logits, dim=-1)
+    policy_loss = -(policy_target * log_policy).sum(dim=-1).mean()
+
+    value_pred = value_pred.squeeze(-1)
+    value_loss = F.mse_loss(value_pred, value_target)
+
+    loss = lambda_policy * policy_loss + lambda_value * value_loss
+    optimizer.zero_grad()
+    loss.backward()
+    torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=grad_clip)
+    optimizer.step()
+
+    return {
+        "loss": loss.item(),
+        "policy_loss": policy_loss.item(),
+        "value_loss": value_loss.item()
+    }</pre>
+
+    <h3>15. Ne pas entrainer sur le seul coup joue</h3>
+    <p>
+      Si <code>pi = [0.05, 0.05, 0, 0.55, 0.30, 0, 0.05]</code> et que l'action 3 est tiree, stocker seulement
+      <code>action_played = 3</code> transformerait la cible en one-hot et ferait perdre l'information que l'action 4 avait obtenu
+      30 % des visites. La Policy doit donc apprendre la distribution de recherche, pas seulement l'action echantillonnee.
+    </p>
+
+    <h3>16. Metriques a enregistrer pendant l'entrainement</h3>
+    <p>
+      La simple loss ne suffit pas. A chaque periode d'entrainement, il faut suivre au minimum:
+    </p>
+    <pre>generation
+training_step
+loss_total
+loss_policy
+loss_value
+policy_entropy
+value_mae
+gradient_norm
+learning_rate</pre>
+    <p>
+      Ces metriques permettent de distinguer un reseau qui n'apprend pas d'un reseau qui apprend le replay buffer mais ne devient pas
+      meilleur joueur.
+    </p>
+
+    <h3>17. Loss faible et force strategique</h3>
+    <p>
+      Une loss plus faible ne signifie pas necessairement une meilleure IA. La loss mesure surtout la capacite du reseau a approximer
+      <code>(pi, z)</code> sur le replay buffer. La force reelle doit etre mesuree dans le jeu et sur les tests strategiques.
+    </p>
+    <pre>Performance d'apprentissage: losses et calibration
+Performance strategique: parties, tournois, positions critiques</pre>
+
+    <h3>18. Contrat definitif self-play vers training</h3>
+    <pre>Self-play produit:
+  S, LegalMask, pi_MCTS, Result
+
+Dataset transforme en:
+  Input       = S
+  Constraint  = LegalMask
+  PolicyLabel = pi_MCTS
+  ValueLabel  = z_terminal
+
+Network produit:
+  PolicyPrediction = p_theta
+  ValuePrediction  = v_theta
+
+Training minimise:
+  L_policy = - sum_a pi_a * log p_a
+  L_value  = (z - v)^2
+  L        = lambda_p * L_policy
+           + lambda_v * L_value
+           + lambda_r * R(theta)</pre>
+
+    <h3>19. Statut du dataset v001 10k</h3>
+    <p>
+      L'audit du dataset v001 montre qu'il contient 10 000 positions, separees en 7 979 train, 908 validation et 1 113 test. Les
+      positions gardent 70 graines et les trajectoires sont separees entre splits. C'est une bonne base de laboratoire.
+    </p>
+    <p>
+      Mais ce dataset ne doit pas etre considere comme le corpus d'apprentissage final du modele autonome. Il contient surtout des
+      decisions de teacher, avec une part faible de positions exactes, des policy_target souvent one-hot, et des action_values qui ne
+      couvrent pas toujours tous les coups legaux.
+    </p>
+
+    <div class="callout warning">
+      <p><strong>Decision documentaire.</strong> Le corpus de 10 000 positions est un laboratoire de positions reelles pour l'analyse,
+      le test et l'evaluation. Il ne constitue pas le corpus d'entrainement du futur modele autonome. Le corpus principal du modele
+      devra etre produit par self-play, MCTS et resultats terminaux reels.</p>
+    </div>
+
+    <p>
+      On distinguera donc explicitement deux ensembles:
+    </p>
+    <pre>D_LAB = corpus fixe de positions reelles pour analyse, tests et evaluation
+D_RL  = corpus vivant produit par self-play: (S, LegalMask, pi_MCTS, z)</pre>
+    <p>
+      <code>D_LAB</code> peut servir a verifier que le reseau accepte correctement les etats, comparer ses decisions avec celles de
+      Minimax, rechercher des positions interessantes, mesurer les changements entre generations et construire une batterie de tests
+      strategiques. Il ne doit pas etre relabellise artificiellement pour devenir le dataset principal d'entrainement autonome.
+      <code>D_RL</code>, lui, est produit par l'agent et evolue en meme temps que son intelligence.
+    </p>
+
+    <h3>20. Informations utiles du dataset existant</h3>
+    <table>
+      <tr><th>Champ</th><th>Utilite</th><th>Limite</th></tr>
+      <tr><td>state</td><td>Etat canonique exploitable.</td><td>Ne contient pas directement ZT/TS/TR/TM.</td></tr>
+      <tr><td>legal_mask</td><td>Masque action fiable.</td><td>Produit par le moteur, pas a apprendre.</td></tr>
+      <tr><td>best_action</td><td>Reference Minimax et comparaison.</td><td>Ne doit pas devenir la verite strategique finale.</td></tr>
+      <tr><td>policy_target</td><td>Audit du comportement teacher; warm-start optionnel.</td><td>Souvent quasi one-hot, moins riche que pi_MCTS.</td></tr>
+      <tr><td>wdl_target</td><td>Signal de laboratoire ou baseline.</td><td>Derive de l'evaluation du teacher, pas de resultats reels.</td></tr>
+      <tr><td>consequences</td><td>Capture, mobilite, famine.</td><td>Pas Bidoua/Yinda/Transport explicites.</td></tr>
+    </table>
+
+    <h3>21. Replay buffer cible D_RL</h3>
+    <pre>Experience:
+  state
+  legal_mask
+  pi_mcts
+  z_terminal
+  generation_id
+  mcts_budget
+  opponent_id
+  move_number
+  tags: capture, famine, bidoua_candidate, long_cycle, etc.</pre>
+
+    <h3>22. Algorithme du replay buffer</h3>
+    <pre>Algorithme ReplayBuffer_Insert(experiences)
+1. pour chaque experience e:
+     verifier conservation des graines
+     verifier legal_mask non vide sauf terminal
+     verifier somme(pi_mcts) = 1 sur coups legaux
+     calculer cle = hash(state, legal_mask, generation)
+     si doublon strict:
+       incrementer compteur ou ignorer selon config
+     sinon:
+       ajouter e au buffer
+2. si taille(buffer) > capacite:
+     supprimer les plus anciennes experiences
+     conserver un quota de positions critiques
+     conserver un quota de generations historiques</pre>
+
+    <h3>23. Echantillonnage des batches</h3>
+    <p>
+      Le buffer ne doit pas echantillonner uniformement sans controle. Une version simple peut melanger 70 % de positions recentes,
+      20 % de positions historiques et 10 % de positions critiques. Cette proportion est une hypothese initiale: elle doit etre
+      ajustee si le modele oublie les anciennes situations ou surapprend les cas rares.
+    </p>
+    <pre>Algorithme SampleBatch(buffer, batch_size)
+1. n_recent = 0.70 * batch_size
+2. n_history = 0.20 * batch_size
+3. n_critical = 0.10 * batch_size
+4. tirer les exemples dans chaque sous-buffer
+5. melanger le batch final
+6. retourner batch</pre>
+  </section>
+
+  <section class="pagebreak">
+    <h2>XII. Reward, nulles, exploration et curriculum</h2>
+    <h3>1. Reward terminal</h3>
+    <p>
+      Le signal principal recommande est terminal: +1 pour victoire, 0 pour nulle, -1 pour defaite, du point de vue du joueur au
+      trait dans l'exemple memorise. Ce choix evite de transformer l'heuristique Minimax en verite finale.
+    </p>
+
+    <h3>2. Parties nulles</h3>
+    <p>
+      Les nulles doivent etre conservees comme resultat distinct, pas forcees en petites victoires ou defaites. Elles sont importantes
+      pour calibrer V(S) et detecter les positions ou un modele trop agressif croit voir un gain inexistant.
+    </p>
+
+    <h3>3. Exploration</h3>
+    <p>Les mecanismes initiaux d'exploration sont:</p>
+    <ul>
+      <li>temperature elevee dans les premiers coups, puis plus basse en fin de partie;</li>
+      <li>bruit de Dirichlet a la racine pendant le self-play;</li>
+      <li>selection d'adversaires historiques;</li>
+      <li>injection de positions critiques dans certaines parties.</li>
+    </ul>
+
+    <h3>4. Curriculum</h3>
+    <p>
+      Le curriculum ne doit pas seulement suivre ouverture, milieu, fin. Il doit aussi suivre la complexite strategique:
+      peu/beaucoup de coups legaux, capture immediate, longue circulation, retour, famine, creation de grenier, Yinda, transport et
+      sequences ou une capture immediate est inferieure a une accumulation.
+    </p>
+
+    <h3>5. Pourquoi eviter le reward shaping trop fort?</h3>
+    <p>
+      Donner directement des recompenses intermediaires pour Bidoua, capture ou mobilite peut accelerer l'apprentissage, mais cela
+      peut aussi enfermer le modele dans notre heuristique. La version recommandee garde un reward terminal principal et utilise les
+      signaux intermediaires surtout comme tags d'analyse, taches auxiliaires optionnelles ou criteres de curriculum.
+    </p>
+
+    <h3>6. Algorithme de temperature</h3>
+    <pre>Algorithme Temperature(move_number, phase)
+1. si self-play = faux:
+     retourner 0
+2. si move_number est inferieur a ouverture_temperature_moves:
+     retourner tau_high
+3. si phase = fin_de_partie:
+     retourner tau_low
+4. sinon:
+     retourner tau_mid</pre>
+    <p>
+      Une temperature haute force l'exploration au debut. Une temperature basse stabilise les decisions lorsque la partie devient
+      tactique et que chaque coup peut provoquer une capture ou une famine.
+    </p>
+  </section>
+
+  <section>
+    <h2>XIII. Architecture du code existant et adaptation cible</h2>
+    <h3>1. Principe d'adaptation</h3>
+    <p>
+      La suite du projet ne doit pas inventer une nouvelle arborescence independante du depot actuel. Le code existant contient deja
+      plusieurs briques solides: moteur de regles, moteur rapide, recherche Negamax, generation de datasets, reseau MLP multi-tetes,
+      entrainement, evaluation, registry de modeles, scripts trainer et interface de table. L'architecture SRN/RL doit donc etre
+      ajoutee comme une evolution du package <code>songo_ai</code>, en reutilisant ces modules autant que possible.
+    </p>
+
+    <h3>2. Arborescence reelle observee</h3>
+    <pre>songo/
++-- packages/songo_ai/
+|   +-- songo/
+|   |   +-- rules.py
+|   |   +-- fast_rules.py
+|   +-- search/
+|   |   +-- negamax.py
+|   +-- teachers/
+|   |   +-- deep_teacher.py
+|   |   +-- cache.py
+|   +-- dataset/
+|   |   +-- build.py
+|   |   +-- schema.py
+|   |   +-- validate.py
+|   |   +-- merge.py
+|   |   +-- external_import.py
+|   +-- generation/
+|   |   +-- trajectories.py
+|   |   +-- sampling.py
+|   |   +-- agents.py
+|   +-- model/
+|   |   +-- features.py
+|   |   +-- dataset.py
+|   |   +-- network.py
+|   |   +-- losses.py
+|   |   +-- train.py
+|   |   +-- inference.py
+|   |   +-- registry.py
+|   +-- hybrid/
+|   |   +-- network_eval.py
+|   |   +-- songofish.py
+|   +-- evaluation/
+|   |   +-- tournament.py
+|   +-- cloud/
+|       +-- config.py
+|       +-- jobs.py
+|       +-- providers.py
+|       +-- storage.py
++-- apps/
+|   +-- trainer/
+|   +-- table/
++-- data/
+|   +-- dataset_v001_10k/
+|   +-- dataset_v002_100k/
+|   +-- dataset_v003_110k/
+|   +-- dataset_v004_290k/
+|   +-- dataset_v005_400k/
+|   +-- checkpoints/
++-- docs/</pre>
+
+    <h3>3. Roles des modules existants</h3>
+    <table>
+      <tr><th>Module existant</th><th>Role actuel</th><th>Role dans l'architecture SRN/RL</th></tr>
+      <tr><td>songo/rules.py</td><td>Moteur de regles de reference, etat, coups legaux, transitions, terminal.</td><td>Reference fonctionnelle a conserver pour les tests et la verite des regles.</td></tr>
+      <tr><td>songo/fast_rules.py</td><td>Version rapide/Numba du moteur, legal_mask, play_local, clone_for_search.</td><td>Base privilegiee pour MCTS et self-play intensif.</td></tr>
+      <tr><td>search/negamax.py</td><td>Recherche Alpha-Beta/Negamax et evaluation heuristique.</td><td>Baseline, adversaire, teacher optionnel, pas source principale RL.</td></tr>
+      <tr><td>teachers/deep_teacher.py</td><td>Annotation des positions par teacher profond.</td><td>Warm-start et audit, mais pas label principal du dataset RL.</td></tr>
+      <tr><td>dataset/*</td><td>Construction, schema, validation et fusion des datasets teacher.</td><td>A etendre avec un schema RL pour (S, M, pi, z) sans casser les datasets existants.</td></tr>
+      <tr><td>generation/*</td><td>Trajectoires, sampling, agents pour produire positions et datasets.</td><td>A reutiliser pour self-play, en remplacant les labels teacher par pi_MCTS et z_terminal.</td></tr>
+      <tr><td>model/features.py</td><td>Features vectorielles MLP: 33 entrees derivees.</td><td>Baseline MLP et comparaison; ne doit pas figer l'encodeur SRN.</td></tr>
+      <tr><td>model/network.py</td><td>SongoNet MLP residuel avec tetes Policy, WDL et Q-actions.</td><td>Baseline actuelle; SRN doit etre ajoute comme nouvelle architecture parallele.</td></tr>
+      <tr><td>model/dataset.py</td><td>ObservationDataset charge les shards JSONL teacher.</td><td>A completer par un SelfPlayDataset respectant le contrat (state, legal_mask, policy_target, value_target).</td></tr>
+      <tr><td>model/train.py</td><td>Boucle d'entrainement supervise, checkpoints, validation.</td><td>A reutiliser et generaliser pour trainer MLP teacher et SRN self-play.</td></tr>
+      <tr><td>model/registry.py</td><td>Registry, champion, versions, promotion manuelle.</td><td>A conserver pour les generations RL et la selection de champions.</td></tr>
+      <tr><td>hybrid/*</td><td>Utilisation reseau + recherche SongoFish.</td><td>Pont utile pour integrer un reseau appris dans un agent de jeu.</td></tr>
+      <tr><td>evaluation/tournament.py</td><td>Matches, evaluation, comparaison d'agents.</td><td>Base pour evaluer checkpoints RL contre champion, anciens modeles et Minimax.</td></tr>
+      <tr><td>cloud/*</td><td>Execution locale/GCP, stockage, jobs.</td><td>Infrastructure utile pour generer self-play et entrainer a plus grande echelle.</td></tr>
+      <tr><td>apps/trainer</td><td>Scripts et notebooks de construction/entrainement/export.</td><td>Point d'entree experimental a adapter avant industrialisation.</td></tr>
+      <tr><td>apps/table</td><td>Interface de jeu locale avec controleurs.</td><td>Support pour tester les agents et l'integration utilisateur.</td></tr>
+    </table>
+
+    <h3>4. Architecture actuelle du modele</h3>
+    <p>
+      Le modele existant principal est <code>SongoNet</code> dans <code>model/network.py</code>. Il s'agit d'un MLP residuel leger:
+      une couche d'entree, plusieurs blocs residuels, puis trois tetes:
+    </p>
+    <pre>SongoNet actuel:
+  input: observation_features(state, legal_mask) -> 33 valeurs
+  trunk: MLP residuel
+  outputs:
+    policy_head -> 7 logits
+    wdl_head    -> 3 logits
+    q_head      -> 7 valeurs</pre>
+    <p>
+      Cette architecture est utile comme baseline. Elle ne doit pas etre supprimee. Elle permettra de comparer la valeur reelle du SRN
+      contre un modele vectoriel deja present dans le code.
+    </p>
+
+    <h3>5. Architecture cible comme extension du depot existant</h3>
+    <p>
+      La cible ne doit pas remplacer brutalement <code>songo_ai</code>. Elle doit ajouter des modules manquants tout en gardant les
+      responsabilites existantes. Une adaptation raisonnable est:
+    </p>
+    <pre>packages/songo_ai/
++-- songo/                 # conserve: regles exactes et moteur rapide
++-- search/
+|   +-- negamax.py          # conserve: baseline
+|   +-- mcts.py             # nouveau: MCTS/PUCT
+|   +-- puct.py             # nouveau: formule de selection
++-- model/
+|   +-- network.py          # conserve: MLP baseline
+|   +-- srn_graph.py        # nouveau: construction graphe 14 noeuds
+|   +-- srn_network.py      # nouveau: SRN Policy/Value
+|   +-- selfplay_dataset.py # nouveau: contrat (S, M, pi, z)
+|   +-- losses.py           # etendre: policy CE, scalar value, WDL
+|   +-- train.py            # etendre: trainer commun
++-- generation/
+|   +-- trajectories.py     # conserve
+|   +-- selfplay.py         # nouveau: parties Network+MCTS
++-- evaluation/
+|   +-- tournament.py       # conserve et etendre
+|   +-- critical_positions.py # nouveau
++-- model/registry.py       # conserve: generations et champions</pre>
+
+    <h3>6. Regle de migration</h3>
+    <p>
+      La migration doit suivre une regle simple: reutiliser les modules existants lorsqu'ils correspondent deja au contrat cible, et
+      ajouter un module seulement lorsqu'une responsabilite nouvelle apparait. Il ne faut pas dupliquer le moteur de regles, le systeme
+      de registry, l'evaluation par tournoi ou les scripts de generation si une extension suffit.
+    </p>
+    <table>
+      <tr><th>Besoin SRN/RL</th><th>Action recommandee</th></tr>
+      <tr><td>Moteur exact</td><td>Reutiliser <code>songo/rules.py</code> et <code>fast_rules.py</code>.</td></tr>
+      <tr><td>MCTS/PUCT</td><td>Ajouter <code>search/mcts.py</code> sans modifier Negamax.</td></tr>
+      <tr><td>Graphe SRN</td><td>Ajouter <code>model/srn_graph.py</code> et tester contre le moteur.</td></tr>
+      <tr><td>Reseau SRN</td><td>Ajouter <code>model/srn_network.py</code> en gardant <code>network.py</code> comme baseline.</td></tr>
+      <tr><td>Dataset RL</td><td>Ajouter <code>model/selfplay_dataset.py</code> ou <code>dataset/selfplay_schema.py</code>.</td></tr>
+      <tr><td>Self-play</td><td>Ajouter <code>generation/selfplay.py</code> en reutilisant agents/trajectoires si possible.</td></tr>
+      <tr><td>Training</td><td>Etendre <code>model/train.py</code> pour accepter MLP teacher et SRN RL.</td></tr>
+      <tr><td>Evaluation</td><td>Etendre <code>evaluation/tournament.py</code> et ajouter positions critiques.</td></tr>
+      <tr><td>Checkpoints</td><td>Conserver <code>model/registry.py</code>.</td></tr>
+    </table>
+
+    <h3>7. Ordre d'adaptation recommande</h3>
+    <pre>1. Conserver et tester le moteur existant:
+   rules.py + fast_rules.py.
+2. Ajouter le contrat de donnees self-play:
+   (state, legal_mask, policy_target, value_target, metadata).
+3. Ajouter GraphBuilder/SRN sans toucher au MLP existant.
+4. Ajouter MCTS/PUCT en reutilisant fast_rules.py.
+5. Produire un petit self-play dataset de test.
+6. Adapter train.py pour entrainer SRN sur le contrat (S, M, pi, z).
+7. Evaluer via tournament.py et registry.py.
+8. Comparer MLP baseline, SRN sans MCTS, SRN + MCTS.</pre>
+
+    <div class="callout decision">
+      <p><strong>Decision d'architecture logicielle.</strong> Le projet doit evoluer par extension du package existant
+      <code>songo_ai</code>. La documentation ne prescrit donc pas une arborescence neuve a recopier; elle fixe les responsabilites
+      a ajouter autour des modules deja presents.</p>
+    </div>
+  </section>
+
+  <section class="pagebreak">
+    <h2>XIV. Squelette de code</h2>
+    <h3>1. Etat et graphe</h3>
+    <pre>from dataclasses import dataclass
+from typing import Dict, List, Tuple
+
+@dataclass(frozen=True)
+class SongoState:
+    pits: Tuple[int, ...]      # 14 cases jouables
+    stores: Tuple[int, int]    # joueur courant, adversaire
+    legal_mask: Tuple[bool, ...]
+
+@dataclass
+class SongoGraph:
+    node_features: "Tensor"              # [14, node_dim]
+    global_features: "Tensor"            # [global_dim]
+    edges_by_relation: Dict[str, "Tensor"] # relation -> [2, num_edges]
+
+class SongoGraphBuilder:
+    def build(self, state: SongoState) -> SongoGraph:
+        node_features = self.encode_nodes(state)
+        global_features = self.encode_global(state)
+        edges = {
+            "next": self.next_edges(),
+            "prev": self.prev_edges(),
+            "mirror": self.mirror_edges(),
+            "dynamic_sowing": self.dynamic_sowing_edges(state),
+        }
+        return SongoGraph(node_features, global_features, edges)</pre>
+
+    <h3>2. Bloc relationnel</h3>
+    <pre>class RelationalBlock(nn.Module):
+    def __init__(self, dim: int, relations: list[str]):
+        super().__init__()
+        self.messages = nn.ModuleDict({
+            r: nn.Sequential(nn.Linear(2 * dim, dim), nn.ReLU(), nn.Linear(dim, dim))
+            for r in relations
+        })
+        self.update = nn.Sequential(nn.Linear(2 * dim, dim), nn.ReLU(), nn.Linear(dim, dim))
+        self.norm = nn.LayerNorm(dim)
+
+    def forward(self, h, edges_by_relation):
+        agg = torch.zeros_like(h)
+        for rel, edges in edges_by_relation.items():
+            src, dst = edges
+            pair = torch.cat([h[src], h[dst]], dim=-1)
+            msg = self.messages[rel](pair)
+            agg.index_add_(0, dst, msg)
+        out = self.update(torch.cat([h, agg], dim=-1))
+        return self.norm(h + out)</pre>
+
+    <h3>3. Policy-Value SRN</h3>
+    <pre>class SongoRelationalNetwork(nn.Module):
+    def __init__(self, node_dim, global_dim, hidden_dim=64, blocks=4, relations=None):
+        super().__init__()
+        relations = relations or ["next", "prev", "mirror", "dynamic_sowing"]
+        self.node_encoder = nn.Linear(node_dim, hidden_dim)
+        self.global_encoder = nn.Linear(global_dim, hidden_dim)
+        self.blocks = nn.ModuleList([RelationalBlock(hidden_dim, relations) for _ in range(blocks)])
+        self.policy = nn.Linear(2 * hidden_dim, 7)
+        self.value = nn.Sequential(nn.Linear(2 * hidden_dim, hidden_dim), nn.ReLU(), nn.Linear(hidden_dim, 1), nn.Tanh())
+
+    def forward(self, graph, legal_mask):
+        h = self.node_encoder(graph.node_features)
+        g = self.global_encoder(graph.global_features)
+        for block in self.blocks:
+            h = block(h, graph.edges_by_relation)
+        pooled = h.mean(dim=0)
+        latent = torch.cat([pooled, g], dim=-1)
+        logits = self.policy(latent)
+        logits = logits.masked_fill(~legal_mask, -1e9)
+        value = self.value(latent).squeeze(-1)
+        return logits, value</pre>
+
+    <h3>4. MCTS</h3>
+    <pre>class MCTS:
+    def __init__(self, env, network, simulations: int, c_puct: float):
+        self.env = env
+        self.network = network
+        self.simulations = simulations
+        self.c_puct = c_puct
+
+    def search(self, state):
+        root = Node(state)
+        priors, value = self.evaluate(state)
+        root.expand(priors)
+        for _ in range(self.simulations):
+            path = self.select(root)
+            leaf = path[-1]
+            if self.env.is_terminal(leaf.state):
+                z = self.env.terminal_value(leaf.state)
+            else:
+                priors, z = self.evaluate(leaf.state)
+                leaf.expand(priors)
+            self.backup(path, z)
+        return root.visit_distribution()</pre>
+
+    <h3>5. Loss d'entrainement</h3>
+    <pre>def srn_loss(batch, model, weights):
+    graphs = graph_builder.build_batch(batch.states)
+    policy_logits, values = model(graphs, batch.legal_masks)
+
+    log_probs = log_softmax(policy_logits, dim=-1)
+    policy_loss = -(batch.pi_mcts * log_probs).sum(dim=-1).mean()
+
+    value_loss = mse_loss(values, batch.z)
+
+    aux_loss = 0.0
+    if batch.has_auxiliary_targets:
+        aux_loss = compute_auxiliary_losses(model, batch)
+
+    total = (
+        weights.policy * policy_loss
+        + weights.value * value_loss
+        + weights.aux * aux_loss
+    )
+    return total, {
+        "policy": policy_loss,
+        "value": value_loss,
+        "aux": aux_loss,
+    }</pre>
+
+    <h3>6. Boucle d'entrainement</h3>
+    <pre>def train_one_generation(model, replay_buffer, optimizer, epochs):
+    model.train()
+    for epoch in range(epochs):
+        for batch in replay_buffer.iter_batches():
+            optimizer.zero_grad()
+            loss, metrics = srn_loss(batch, model, weights)
+            loss.backward()
+            clip_grad_norm_(model.parameters(), max_norm=1.0)
+            optimizer.step()
+        validate(model)
+    return model</pre>
+
+    <h3>7. Acteur de self-play</h3>
+    <pre>def run_selfplay_actor(model, env, mcts, replay_buffer, games):
+    for _ in range(games):
+        trajectory = []
+        state = env.new_game()
+        while not env.is_terminal(state):
+            pi_mcts = mcts.search(state)
+            action = select_action(pi_mcts, temperature(state))
+            trajectory.append((state, pi_mcts, env.current_player(state)))
+            state = env.play(state, action)
+
+        result = env.result(state)
+        for state_t, pi_t, player_t in trajectory:
+            z_t = result_from_player_view(result, player_t)
+            replay_buffer.add(state_t, pi_t, z_t)</pre>
+  </section>
+
+  <section>
+    <h2>XV. Protocole experimental</h2>
+    <h3>1. Baselines</h3>
+    <table>
+      <tr><th>Modele</th><th>But</th><th>Question</th></tr>
+      <tr><td>MLP actuel</td><td>Reference simple sur features vectorielles.</td><td>Le SRN fait-il mieux qu'une bonne baseline?</td></tr>
+      <tr><td>SRN sans MCTS</td><td>Tester l'architecture seule.</td><td>Le graphe ameliore-t-il policy/value?</td></tr>
+      <tr><td>SRN + MCTS faible budget</td><td>Tester planification legere.</td><td>Quel gain par simulation?</td></tr>
+      <tr><td>SRN + MCTS budget croissant</td><td>Evaluer la scalabilite.</td><td>Le modele utilise-t-il mieux la recherche?</td></tr>
+      <tr><td>Minimax/Negamax</td><td>Adversaire et reference.</td><td>Le modele depasse-t-il progressivement le teacher?</td></tr>
+    </table>
+
+    <h3>2. Ablations</h3>
+    <ul>
+      <li>supprimer la relation dynamic_sowing;</li>
+      <li>supprimer mirror ou border;</li>
+      <li>reduire le nombre de blocs;</li>
+      <li>remplacer pooling moyen par pooling attentionnel;</li>
+      <li>entrainer sans tetes auxiliaires;</li>
+      <li>comparer policy one-hot teacher vs pi_MCTS;</li>
+      <li>comparer avec et sans positions critiques dans le curriculum.</li>
+    </ul>
+
+    <h3>3. Mesures</h3>
+    <p>
+      Les mesures principales sont le taux de victoire, un Elo interne, la calibration de V(S), l'entropie de la politique, la
+      robustesse contre checkpoints historiques, la performance sur positions critiques et l'analyse des representations.
+    </p>
+
+    <h3>4. Algorithme d'ablation</h3>
+    <pre>Algorithme RunAblation(base_config, component)
+1. entrainer modele_base avec base_config
+2. creer config_ablation en retirant component
+3. entrainer modele_ablation avec meme budget
+4. comparer:
+     loss validation
+     matchs tete-a-tete
+     positions critiques
+     calibration Value
+     cout inference
+5. conclure:
+     si ablation similaire a base:
+       component non justifie ou mal exploite
+     si ablation moins bonne que base:
+       component utile
+     si ablation meilleure que base:
+       component nuisible ou sur-parametrant</pre>
+  </section>
+
+  <section class="pagebreak">
+    <h2>XVI. Validation de l'intelligence strategique</h2>
+    <p>
+      Le modele ne doit pas seulement gagner en moyenne. Il doit montrer qu'il apprend les phenomenes caracteristiques du Songo.
+    </p>
+    <table>
+      <tr><th>Phenomenes</th><th>Test recommande</th><th>Signe attendu</th></tr>
+      <tr><td>Circulation longue</td><td>Positions ou une case traverse plusieurs zones.</td><td>Le modele anticipe l'arrivee utile.</td></tr>
+      <tr><td>Retour</td><td>Sequences avec retour sur territoire.</td><td>La valeur ne chute pas par myopie.</td></tr>
+      <tr><td>Transferts multiples</td><td>Positions ou plusieurs cases sont alimentees.</td><td>Policy non reduite a la capture immediate.</td></tr>
+      <tr><td>Bidoua</td><td>Case 5+ qui vaut plus qu'une petite capture.</td><td>Le modele preserve ou construit l'accumulation.</td></tr>
+      <tr><td>Yinda-Bidoua</td><td>Ajout d'une graine qui change non lineairement le potentiel.</td><td>Le modele evite les transports destructeurs.</td></tr>
+      <tr><td>Transport-Bidoua</td><td>Sequence qui cree un grenier exploitable.</td><td>MCTS et Policy convergent vers la sequence.</td></tr>
+      <tr><td>Temporalite</td><td>Positions ou le bon coup est preparatoire.</td><td>Le modele accepte un gain immediat plus faible.</td></tr>
+    </table>
+  </section>
+
+  <section>
+    <h2>XVII. Decisions, hypotheses, validations</h2>
+    <table>
+      <tr><th>Sujet</th><th>Statut</th><th>Commentaire</th></tr>
+      <tr><td>Moteur exact separe du reseau</td><td><span class="status ok">Decide</span></td><td>Le reseau n'apprend pas les regles.</td></tr>
+      <tr><td>Policy-Value</td><td><span class="status ok">Decide</span></td><td>Necessaire pour MCTS/self-play.</td></tr>
+      <tr><td>SRN relationnel</td><td><span class="status todo">Hypothese principale</span></td><td>Doit battre MLP et ablations.</td></tr>
+      <tr><td>MCTS/PUCT</td><td><span class="status todo">Hypothese forte</span></td><td>Budget et gain a mesurer.</td></tr>
+      <tr><td>Bidoua en entree directe</td><td><span class="status open">Non retenu v0.1</span></td><td>Preferer emergence et analyse.</td></tr>
+      <tr><td>Taches auxiliaires ZT/TS/TR/TM</td><td><span class="status open">A tester</span></td><td>Peut aider ou contraindre trop fort.</td></tr>
+      <tr><td>Dataset v001 10k</td><td><span class="status ok">Laboratoire</span></td><td>Pas corpus final d'apprentissage autonome.</td></tr>
+      <tr><td>Self-play</td><td><span class="status ok">Source principale</span></td><td>Avec replay buffer vivant et checkpoints historiques.</td></tr>
+      <tr><td>Warm-start Minimax</td><td><span class="status open">Option experimentale</span></td><td>A comparer au RL depuis zero, sans dependance permanente.</td></tr>
+      <tr><td>Promotion checkpoints</td><td><span class="status todo">A definir finement</span></td><td>Matchs, calibration, positions critiques.</td></tr>
+    </table>
+  </section>
+
+  <section>
+    <h2>XVIII. Feuille de route</h2>
+    <table>
+      <tr><th>Lot</th><th>Livrable</th><th>Critere de sortie</th></tr>
+      <tr><td>1</td><td>Audit et tests moteur</td><td>Regles deterministes, conservation des graines, cas limites couverts.</td></tr>
+      <tr><td>2</td><td>Baseline MLP documentee</td><td>Pipeline train/eval reproductible.</td></tr>
+      <tr><td>3</td><td>GraphBuilder Songo</td><td>Relations statiques et dynamiques inspectables.</td></tr>
+      <tr><td>4</td><td>SRN v0.1</td><td>Forward pass, loss RL et warm-start optionnel.</td></tr>
+      <tr><td>5</td><td>MCTS v0.1</td><td>pi_MCTS produit des distributions de visites valides.</td></tr>
+      <tr><td>6</td><td>Self-play</td><td>Replay buffer rempli et reutilisable.</td></tr>
+      <tr><td>7</td><td>Evaluation generations</td><td>Tournois contre anciennes versions et Minimax.</td></tr>
+      <tr><td>8</td><td>Positions critiques</td><td>Suites Bidoua/Yinda/transport testees.</td></tr>
+      <tr><td>9</td><td>Ablations</td><td>Gain du SRN demontre ou remis en cause.</td></tr>
+      <tr><td>10</td><td>Integration Unity eventuelle</td><td>Modele exporte et contrat d'inference stabilise.</td></tr>
+    </table>
+  </section>
+
+  <section class="pagebreak">
+    <h2>Annexe A. Hyperparametres initiaux</h2>
+    <table>
+      <tr><th>Parametre</th><th>Valeur initiale</th><th>Raison</th></tr>
+      <tr><td>hidden_dim</td><td>64</td><td>Assez expressif, cout modere.</td></tr>
+      <tr><td>blocs relationnels</td><td>3 a 4</td><td>Propagation sans sur-parametrage initial.</td></tr>
+      <tr><td>relations</td><td>next, prev, mirror, dynamic_sowing</td><td>Base compacte a ablater.</td></tr>
+      <tr><td>optimizer</td><td>AdamW</td><td>Standard stable.</td></tr>
+      <tr><td>learning rate</td><td>1e-3 puis schedule</td><td>Point de depart a calibrer.</td></tr>
+      <tr><td>batch size</td><td>256</td><td>Selon memoire disponible.</td></tr>
+      <tr><td>simulations MCTS</td><td>64, puis 128/256</td><td>Montee progressive.</td></tr>
+      <tr><td>c_puct</td><td>1.0 a 2.5</td><td>Balayage experimental.</td></tr>
+      <tr><td>Dirichlet alpha</td><td>0.3</td><td>A ajuster au nombre de coups legaux.</td></tr>
+      <tr><td>epsilon bruit</td><td>0.25</td><td>Valeur classique de depart.</td></tr>
+      <tr><td>temperature</td><td>1.0 debut, 0.1 fin</td><td>Explorer puis stabiliser.</td></tr>
+    </table>
+  </section>
+
+  <section>
+    <h2>Annexe B. Differences avec le code actuel</h2>
+    <p>
+      Le code actuel contient deja un reseau multi-tetes MLP: policy, WDL et Q-actions, base sur des features vectorielles de taille
+      33. Il contient aussi un moteur de regles, un Negamax/Alpha-Beta, une evaluation avec bonus de territoire sur, des pipelines de
+      dataset et des scripts d'entrainement.
+    </p>
+    <p>
+      La documentation presente ici decrit l'architecture cible suivante: SRN relationnel, MCTS/PUCT, replay buffer de self-play,
+      corpus evolutif, evaluation par generations et validation strategique. Elle ne pretend donc pas que le depot implemente deja
+      toute cette architecture. Elle sert de reference pour la suite du projet.
+    </p>
+    <table>
+      <tr><th>Element</th><th>Etat actuel</th><th>Cible SRN</th></tr>
+      <tr><td>Reseau</td><td>MLP residuel multi-tetes.</td><td>Graphe relationnel Policy-Value.</td></tr>
+      <tr><td>Policy target</td><td>Teacher ou cibles dataset.</td><td>Distribution MCTS en self-play.</td></tr>
+      <tr><td>Value target</td><td>WDL derive d'une valeur teacher.</td><td>Resultat terminal reel.</td></tr>
+      <tr><td>Recherche</td><td>Negamax/Alpha-Beta.</td><td>MCTS guide par SRN, plus baselines.</td></tr>
+      <tr><td>Bidoua</td><td>Bonus heuristique territoire sur.</td><td>Phenomenes a apprendre/analyser, pas entree forcee.</td></tr>
+      <tr><td>Corpus</td><td>Datasets annotes par teacher.</td><td>Self-play + replay + positions critiques.</td></tr>
+    </table>
+
+    <div class="callout decision">
+      <p><strong>Conclusion.</strong> Le SRN est une proposition architecturale serieuse parce qu'elle part de la circulation du Songo,
+      mais elle reste une hypothese scientifique. Le projet doit maintenant la tester contre des alternatives simples, puis mesurer
+      si elle apprend reellement Bidoua, Yinda, transport, retours et temporalite des coups.</p>
+    </div>
+  </section>
+
+  <section class="pagebreak">
+    <h2>Annexe C. Algorithmes recapitulatifs</h2>
+    <h3>1. Pipeline complet</h3>
+    <pre>Algorithme Pipeline_SRN_Complet
+1. valider le moteur Songo
+2. construire GraphBuilder
+3. entrainer baseline MLP
+4. choisir protocole initial:
+     A = RL depuis zero
+     B = warm-start supervise optionnel puis RL
+5. initialiser champion = SRN initial selon A ou B
+6. repeter pour generation k:
+     experiences = GenerateSelfPlayGames(champion)
+     ReplayBuffer_Insert(experiences)
+     candidate = TrainGeneration(champion, replay_buffer)
+     decision = PromoteOrReject(candidate, champion)
+     si decision = promote:
+       champion = candidate
+     archiver metrics, config, checkpoint
+7. lancer ablations et validation strategique</pre>
+
+    <h3>2. Flux d'une position pendant l'entrainement</h3>
+    <pre>S brut
+  -> canonicalisation moteur
+  -> legal_mask
+  -> BuildGraph
+  -> SRN forward
+  -> priors P + value V
+  -> MCTS
+  -> pi_mcts
+  -> action jouee
+  -> resultat terminal z
+  -> exemple (S, legal_mask, pi_mcts, z)
+  -> replay buffer
+  -> batch training</pre>
+
+    <h3>3. Flux d'une position pendant le jeu</h3>
+    <pre>S brut
+  -> moteur: legal_mask + etat canonique
+  -> BuildGraph
+  -> SRN: pi_theta, V_theta
+  -> si budget disponible: MCTS(pi_theta, V_theta)
+  -> action choisie
+  -> moteur.play(action)
+  -> nouvel etat</pre>
+
+    <h3>4. Points de controle obligatoires</h3>
+    <table>
+      <tr><th>Etape</th><th>Controle</th><th>Raison</th></tr>
+      <tr><td>GraphBuilder</td><td>Aretes attendues sur positions simples.</td><td>Eviter une relation dynamique fausse.</td></tr>
+      <tr><td>SRN forward</td><td>Formes des tenseurs et masque legal.</td><td>Eviter politiques sur coups illegaux.</td></tr>
+      <tr><td>MCTS</td><td>Somme des visites et backup signe.</td><td>Eviter inversion de valeur.</td></tr>
+      <tr><td>Replay buffer</td><td>Deduplication et z coherent.</td><td>Eviter fuite ou cibles contradictoires.</td></tr>
+      <tr><td>Training</td><td>Policy loss, Value loss, entropy.</td><td>Detecter collapse ou surapprentissage.</td></tr>
+      <tr><td>Evaluation</td><td>Tournois et positions critiques.</td><td>Ne pas promouvoir sur simple loss.</td></tr>
+    </table>
+
+    <h3>5. Ordre de priorite de mise en oeuvre</h3>
+    <p>
+      L'ordre recommande est volontairement conservateur: d'abord GraphBuilder et forward SRN, puis training supervise minimal,
+      ensuite MCTS, puis self-play. Construire self-play avant d'avoir un graphe et une loss fiables rendrait les erreurs difficiles
+      a diagnostiquer.
+    </p>
+  </section>
+</body>
+</html>

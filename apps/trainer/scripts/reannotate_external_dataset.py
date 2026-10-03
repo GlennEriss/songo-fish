@@ -93,7 +93,11 @@ def main() -> None:
     parser.add_argument("--cache-dir", type=Path, required=True, help="cache d'annotations SQLite (mettre sur Drive pour la reprise entre sessions Colab)")
     parser.add_argument("--limit", type=int, default=None, help="pilote : limite le nombre de positions (avant dedup)")
     parser.add_argument("--num-workers", type=int, default=8)
+    parser.add_argument("--shard-index", type=int, default=0, help="index de ce shard, 0..num-shards-1 (ex. plusieurs sessions Colab en parallele)")
+    parser.add_argument("--num-shards", type=int, default=1, help="nombre total de shards -- chaque position va a EXACTEMENT un shard")
     args = parser.parse_args()
+    if not 0 <= args.shard_index < args.num_shards:
+        raise ValueError(f"--shard-index doit etre dans [0, {args.num_shards})")
 
     args.out_dir.mkdir(parents=True, exist_ok=True)
     cache_root = str(args.cache_dir)
@@ -112,6 +116,15 @@ def main() -> None:
     print(f"total avant dedup: {len(all_positions)}")
     all_positions = _dedupe_global(all_positions)
     print(f"total apres dedup (hash Zobrist canonique): {len(all_positions)}")
+
+    if args.num_shards > 1:
+        # Sharding APRES dedup (pas avant) : deux doublons qui tomberaient
+        # dans des shards differents seraient sinon annotes deux fois par
+        # deux sessions Colab distinctes -- gaspillage exactement contraire
+        # au but du sharding. Index base sur la liste globale post-dedup,
+        # donc stable tant que le dataset source ne change pas.
+        all_positions = [p for i, p in enumerate(all_positions) if i % args.num_shards == args.shard_index]
+        print(f"shard {args.shard_index}/{args.num_shards}: {len(all_positions)} positions a annoter")
 
     payloads = [
         (p.board, p.turn, p.game_id, i, REANNOTATE_CONFIG, cache_root) for i, p in enumerate(all_positions)
@@ -183,6 +196,8 @@ def main() -> None:
         "generated_at_unix": time.time(),
         "source": "songo-model-stockfish-for-google-collab (vraies parties, re-annotees avec notre prof)",
         "source_input_dir": str(args.input_dir),
+        "shard_index": args.shard_index,
+        "num_shards": args.num_shards,
         "total_positions": sum(counts.values()),
         "teacher_config": asdict(REANNOTATE_CONFIG),
         "counts_per_split": counts,

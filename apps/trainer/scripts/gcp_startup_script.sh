@@ -23,8 +23,14 @@
 # --max-run-duration atteint).
 set -uo pipefail
 
-BUCKET="gs://songo-model-ai-vertex-bucket-001"
+# Bucket parametrable (songo_ai.cloud.config / GcpProvider le passe en
+# metadata-env) ; defaut historique conserve.
+BUCKET="${SONGO_GCS_BUCKET:-gs://songo-model-ai-vertex-bucket-001}"
 LOG_FILE="/tmp/run.log"
+# L'annotation est CPU-bound et embarrassingly parallel : sur la VM on
+# prend tous les coeurs (le defaut de songo_ai.cloud, moitie des coeurs,
+# vise une machine portable, pas une c2d-highcpu-32).
+export SONGO_NUM_WORKERS="$(nproc)"
 NUM_POSITIONS=$(curl -s -H "Metadata-Flavor: Google" "http://metadata.google.internal/computeMetadata/v1/instance/attributes/num-positions" || echo "100000")
 SEED=$(curl -s -H "Metadata-Flavor: Google" "http://metadata.google.internal/computeMetadata/v1/instance/attributes/seed" || echo "456")
 OUT_DIR="/tmp/dataset_v002_${NUM_POSITIONS}"

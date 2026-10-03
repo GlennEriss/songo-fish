@@ -4,8 +4,10 @@
 # du repo apres tout changement de code devant tourner sur une VM GCP.
 set -euo pipefail
 
-BUCKET="gs://songo-model-ai-vertex-bucket-001"
-PROJECT="songo-model-ai"
+# Parametrable via env (songo_ai.cloud.providers.GcpProvider les passe) ;
+# defauts historiques conserves.
+BUCKET="${SONGO_GCS_BUCKET:-gs://songo-model-ai-vertex-bucket-001}"
+PROJECT="${SONGO_GCP_PROJECT:-songo-model-ai}"
 TARBALL="/tmp/songo_ai_code.tar.gz"
 
 cd "$(dirname "$0")/../../.."  # racine du repo (apps/trainer/scripts/.. .. ..)

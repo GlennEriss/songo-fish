@@ -5,6 +5,11 @@ description = "SongoFish: moteur de regles, professeur Alpha-Beta, dataset et re
 requires-python = ">=3.12"
 dependencies = []
 
+[project.scripts]
+# Runtime multi-provider : `songo-cloud run build|train|tournament ...`
+# (equivalent a `python -m songo_ai.cloud ...`).
+songo-cloud = "songo_ai.cloud.__main__:main"
+
 [project.optional-dependencies]
 dev = ["pytest>=8.0"]
 perf = ["numba>=0.60"]

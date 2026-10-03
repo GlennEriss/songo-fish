@@ -9,6 +9,7 @@ from __future__ import annotations
 import hashlib
 import json
 import random
+import sys
 import time
 from collections import defaultdict
 from concurrent.futures import ProcessPoolExecutor
@@ -58,6 +59,43 @@ def _annotate_payload(payload: Tuple[Tuple[int, ...], int, str, int, TeacherConf
     return annotation, trajectory_id, move_number
 
 
+def _log_progress(fresh: int, fresh_total: int, absolute: int, total: int, start: float) -> None:
+    if fresh != fresh_total and fresh % max(1, fresh_total // 100) != 0:
+        return
+    elapsed = time.perf_counter() - start
+    rate = fresh / elapsed if elapsed else 0.0  # cadence du travail restant
+    eta = (fresh_total - fresh) / rate if rate else 0.0
+    print(
+        f"[build] {absolute}/{total} annotees ({absolute / total * 100:.1f}%) "
+        f"- {rate:.1f}/s - ETA {eta / 60:.0f} min",
+        file=sys.stderr,
+        flush=True,
+    )
+
+
+def _run_annotation(payloads: list, num_workers: int, done_offset: int, total: int) -> list:
+    """Annote `payloads`, en journalisant la progression. Le cache SQLite
+    commit apres CHAQUE position (`AnnotationCache.put`) : si le process est
+    tue en cours de route, tout ce qui est deja annote est sur le disque et
+    un relancement (memes seed/out_dir) le saute d'entree (voir
+    build_dataset)."""
+    out: list = []
+    fresh_total = len(payloads)
+    if fresh_total == 0:
+        return out
+    start = time.perf_counter()
+    if num_workers > 1:
+        with ProcessPoolExecutor(max_workers=num_workers) as pool:
+            for i, res in enumerate(pool.map(_annotate_payload, payloads), 1):
+                out.append(res)
+                _log_progress(i, fresh_total, done_offset + i, total, start)
+    else:
+        for i, payload in enumerate(payloads, 1):
+            out.append(_annotate_payload(payload))
+            _log_progress(i, fresh_total, done_offset + i, total, start)
+    return out
+
+
 def build_dataset(
     num_positions: int,
     out_dir: Path,
@@ -80,16 +118,41 @@ def build_dataset(
     sampled = sample_positions(raw_positions, target_count=num_positions, seed=seed)
 
     cache_root = str(out_dir / "annotation_cache")
-    payloads = [
-        (p.state.board, p.state.turn, p.trajectory_id, p.move_number, teacher_config, cache_root) for p in sampled
-    ]
+    # Pre-cree le fichier cache.db (WAL) UNE fois dans le process principal :
+    # plusieurs workers l'initialisant en meme temps au tout premier
+    # lancement se disputent l'ecrivain SQLite ("database is locked"). Meme
+    # precaution que apps/trainer/scripts/reannotate_own_dataset.py.
+    cache = AnnotationCache(Path(cache_root))
     phase_by_id = {(p.trajectory_id, p.move_number): classify_phase(p) for p in sampled}
 
-    if num_workers > 1:
-        with ProcessPoolExecutor(max_workers=num_workers) as pool:
-            results = list(pool.map(_annotate_payload, payloads))
-    else:
-        results = [_annotate_payload(payload) for payload in payloads]
+    # Reprise : l'echantillonnage est deterministe (meme seed -> memes
+    # positions), et le cache d'annotations (SQLite, commit apres chaque
+    # position) survit a un arret brutal. On calcule le hash de chaque
+    # position et on ne redonne au pool QUE celles qui manquent -- une
+    # reprise ne recalcule rien de deja fait, et ne repasse meme pas les
+    # positions faites par des workers.
+    cached_results: list = []
+    todo: list = []
+    for p in sampled:
+        zhash = FastSongoGame.from_board(p.state.board, p.state.turn).zobrist_hash()
+        hit = cache.get(zhash, teacher_config)
+        if hit is not None:
+            cached_results.append((hit, p.trajectory_id, p.move_number))
+        else:
+            todo.append(
+                (p.state.board, p.state.turn, p.trajectory_id, p.move_number, teacher_config, cache_root)
+            )
+    cache.close()
+
+    total = len(sampled)
+    if cached_results:
+        print(
+            f"[build] reprise : {len(cached_results)}/{total} deja en cache, {len(todo)} a annoter",
+            file=sys.stderr,
+            flush=True,
+        )
+    fresh_results = _run_annotation(todo, num_workers, done_offset=len(cached_results), total=total)
+    results = cached_results + fresh_results
 
     observations: List[Observation] = []
     phases: List[str] = []
