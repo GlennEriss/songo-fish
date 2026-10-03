@@ -42,8 +42,10 @@ class ControlledNetwork(nn.Module):
         )
         self.fixed_value = float(value)
         self.calls = 0
+        self.forward_calls = 0
 
     def forward(self, graph):
+        self.forward_calls += 1
         self.calls += graph.batch_size
         batch_size = graph.batch_size
         logits = self.fixed_logits.unsqueeze(0).expand(batch_size, -1) + self.anchor * 0.0
@@ -257,6 +259,52 @@ def test_search_is_deterministic_without_noise_for_fixed_seed():
     assert result_1.root_q_values == pytest.approx(result_2.root_q_values)
     assert result_1.root_value == pytest.approx(result_2.root_value)
     assert result_1.selected_action == result_2.selected_action
+
+
+def test_search_many_matches_independent_searches_and_batches_network_calls():
+    states = (
+        _state(),
+        _state(PARTIAL_LEGALITY, PLAYER_ONE),
+        _state(P1_IMMEDIATE_WIN, PLAYER_ONE),
+    )
+    seeds = (101, 102, 103)
+    config = MCTSConfig(num_simulations=12, add_root_noise=False, seed=101)
+    sequential = tuple(
+        SongoMCTS(ControlledNetwork(value=0.25), config=MCTSConfig(
+            num_simulations=12, add_root_noise=False, seed=seed
+        )).search(state, policy_temperature=0.0)
+        for state, seed in zip(states, seeds)
+    )
+    batched_model = ControlledNetwork(value=0.25)
+    batched = SongoMCTS(batched_model, config=config).search_many(
+        states, policy_temperature=0.0, seeds=seeds
+    )
+
+    assert len(batched) == len(sequential)
+    for actual, expected in zip(batched, sequential):
+        assert actual.visit_counts == expected.visit_counts
+        assert actual.policy == expected.policy
+        assert actual.root_q_values == pytest.approx(expected.root_q_values)
+        assert actual.root_value == pytest.approx(expected.root_value)
+        assert actual.selected_action == expected.selected_action
+        assert actual.network_evaluations == expected.network_evaluations
+    assert batched_model.calls == sum(result.network_evaluations for result in batched)
+    assert batched_model.forward_calls <= config.num_simulations + 1
+    assert batched_model.forward_calls < batched_model.calls
+
+
+def test_search_many_accepts_terminal_roots_without_network_evaluation():
+    model = ControlledNetwork()
+    terminal = _state((0,) * 14 + (35, 35), PLAYER_ONE)
+    live = _state()
+    results = SongoMCTS(
+        model, config=MCTSConfig(num_simulations=3, seed=7)
+    ).search_many((terminal, live), seeds=(7, 8))
+
+    assert results[0].num_simulations == 0
+    assert results[0].network_evaluations == 0
+    assert results[1].num_simulations == 3
+    assert model.calls == results[1].network_evaluations
 
 
 def test_mcts_uses_eval_no_grad_and_does_not_modify_model_parameters():

@@ -387,6 +387,162 @@ class SongoMCTS:
             simulation_trace=tuple(simulation_trace),
         )
 
+    def search_many(
+        self,
+        states: Sequence["RawSongoState"],
+        *,
+        policy_temperature: float = 1.0,
+        seeds: Optional[Sequence[Optional[int]]] = None,
+    ) -> tuple[MCTSResult, ...]:
+        """Execute plusieurs recherches independantes avec inference groupee.
+
+        Une simulation est avancee par racine et par tour. Les feuilles non
+        terminales obtenues sont ensuite rassemblees dans un unique graphe de
+        batch. Les arbres, statistiques PUCT et sauvegardes restent strictement
+        independants : seul le passage reseau est mutualise.
+
+        Cette forme est particulierement adaptee aux arenes et au self-play ou
+        plusieurs parties sont disponibles simultanement. Elle ne modifie ni
+        le nombre de simulations par position, ni l'autorite du moteur sur les
+        transitions et les terminaux.
+        """
+
+        if not states:
+            return ()
+        if seeds is None:
+            seeds = tuple(
+                None if self.config.seed is None else self.config.seed + index
+                for index in range(len(states))
+            )
+        if len(seeds) != len(states):
+            raise ValueError("seeds must contain one entry per state")
+
+        roots = [self._root_node(state) for state in states]
+        rngs = [random.Random(seed) for seed in seeds]
+        noise_rngs = [np.random.default_rng(seed) for seed in seeds]
+        node_counts = [1] * len(roots)
+        expanded_counts = [0] * len(roots)
+        evaluation_counts = [0] * len(roots)
+        completed_counts = [0] * len(roots)
+        traces: list[list[dict]] = [[] for _ in roots]
+        started_at = time.perf_counter()
+        was_training = self.model.training
+        self.model.eval()
+        try:
+            with torch.no_grad():
+                initial = [root for root in roots if not root.terminal]
+                self._expand_many(initial)
+                for index, root in enumerate(roots):
+                    if not root.terminal:
+                        expanded_counts[index] += 1
+                        evaluation_counts[index] += 1
+                        if self.config.add_root_noise:
+                            self._add_root_noise(root, noise_rngs[index])
+
+                for simulation_index in range(self.config.num_simulations):
+                    pending: list[tuple[int, MCTSNode, list[tuple[MCTSNode, int]]]] = []
+                    terminal_leaves: list[
+                        tuple[int, MCTSNode, list[tuple[MCTSNode, int]], float]
+                    ] = []
+                    for index, root in enumerate(roots):
+                        if root.terminal:
+                            continue
+                        node = root
+                        path: list[tuple[MCTSNode, int]] = []
+                        while node.expanded and not node.terminal:
+                            action = select_puct_action(node, self.config.c_puct, rngs[index])
+                            path.append((node, action))
+                            child = node.children.get(action)
+                            if child is None:
+                                child = self._transition(node, action)
+                                node.children[action] = child
+                                node_counts[index] += 1
+                            node = child
+                        if node.terminal:
+                            terminal_leaves.append(
+                                (index, node, path, terminal_value(node.winner, node.player_to_move))
+                            )
+                        else:
+                            pending.append((index, node, path))
+
+                    values = self._expand_many([node for _, node, _ in pending])
+                    leaves = terminal_leaves + [
+                        (index, node, path, value)
+                        for (index, node, path), value in zip(pending, values)
+                    ]
+                    for index, node, path, leaf_value in leaves:
+                        if not node.terminal:
+                            expanded_counts[index] += 1
+                            evaluation_counts[index] += 1
+                        self._backup(path, leaf_value, node.player_to_move)
+                        if self.config.collect_simulation_trace:
+                            traces[index].append(
+                                self._trace_entry(
+                                    roots[index], node, path, leaf_value, simulation_index
+                                )
+                            )
+                        completed_counts[index] += 1
+        finally:
+            self.model.train(was_training)
+
+        elapsed = time.perf_counter() - started_at
+        results = []
+        for index, root in enumerate(roots):
+            if root.terminal:
+                results.append(
+                    MCTSResult(
+                        visit_counts=tuple(root.visit_counts),
+                        policy=(0.0,) * NUM_ACTIONS,
+                        root_value=terminal_value(root.winner, root.player_to_move),
+                        selected_action=None,
+                        num_simulations=0,
+                        num_nodes=1,
+                        nodes_expanded=0,
+                        network_evaluations=0,
+                        elapsed_s=elapsed,
+                        simulations_per_second=0.0,
+                        root_priors=tuple(root.priors),
+                        root_q_values=root.q_values,
+                        legal_mask=root.legal_mask,
+                    )
+                )
+                continue
+            policy = visit_counts_to_policy(
+                root.visit_counts, root.legal_mask, policy_temperature
+            )
+            root_value = sum(root.value_sums) / root.total_visits
+            max_visits = max(
+                root.visit_counts[action]
+                for action in range(NUM_ACTIONS)
+                if root.legal_mask[action]
+            )
+            selected_action = next(
+                action
+                for action in range(NUM_ACTIONS)
+                if root.legal_mask[action] and root.visit_counts[action] == max_visits
+            )
+            results.append(
+                MCTSResult(
+                    visit_counts=tuple(root.visit_counts),
+                    policy=policy,
+                    root_value=float(root_value),
+                    selected_action=selected_action,
+                    num_simulations=completed_counts[index],
+                    num_nodes=node_counts[index],
+                    nodes_expanded=expanded_counts[index],
+                    network_evaluations=evaluation_counts[index],
+                    elapsed_s=elapsed,
+                    simulations_per_second=(
+                        completed_counts[index] / elapsed if elapsed > 0.0 else float("inf")
+                    ),
+                    root_priors=tuple(root.priors),
+                    root_q_values=root.q_values,
+                    legal_mask=root.legal_mask,
+                    simulation_trace=tuple(traces[index]),
+                )
+            )
+        return tuple(results)
+
     @staticmethod
     def _root_node(state: "RawSongoState") -> MCTSNode:
         game = SongoLegacyGame.from_state(state.to_engine_state())
@@ -440,6 +596,91 @@ class SongoMCTS:
         node.network_value = scalar_value
         node.expanded = True
         return scalar_value
+
+    def _expand_many(self, nodes: Sequence[MCTSNode]) -> tuple[float, ...]:
+        """Etend des feuilles dans un ou plusieurs forwards groupes."""
+
+        if not nodes:
+            return ()
+        if any(node.terminal for node in nodes):
+            raise ValueError("terminal nodes must not be expanded by the network")
+        if any(node.expanded for node in nodes):
+            raise ValueError("node is already expanded")
+        device = self._model_device()
+        from songo_ai.model.srn_network import policy_probabilities
+
+        logits_by_index: list[Optional[torch.Tensor]] = [None] * len(nodes)
+        values_by_index: list[Optional[torch.Tensor]] = [None] * len(nodes)
+        if hasattr(self.model, "forward_at_depth"):
+            depth_groups: dict[int, list[int]] = {}
+            for index, node in enumerate(nodes):
+                depth_groups.setdefault(node.search_depth, []).append(index)
+            for depth, indices in depth_groups.items():
+                graph = self.graph_builder.build_batch([nodes[i].state for i in indices]).to(device)
+                logits, values = self.model.forward_at_depth(graph, depth)
+                for local, original in enumerate(indices):
+                    logits_by_index[original] = logits[local]
+                    values_by_index[original] = values.reshape(-1)[local]
+        else:
+            graph = self.graph_builder.build_batch([node.state for node in nodes]).to(device)
+            logits, values = self.model(graph)
+            flat_values = values.reshape(-1)
+            for index in range(len(nodes)):
+                logits_by_index[index] = logits[index]
+                values_by_index[index] = flat_values[index]
+
+        policy_logits = torch.stack([item for item in logits_by_index if item is not None])
+        legal_mask = torch.tensor(
+            [node.legal_mask for node in nodes], dtype=torch.bool, device=device
+        )
+        priors_batch = policy_probabilities(policy_logits, legal_mask)
+        scalar_values = []
+        for index, node in enumerate(nodes):
+            value_tensor = values_by_index[index]
+            if value_tensor is None:
+                raise RuntimeError("missing batched value output")
+            scalar_value = float(value_tensor.item())
+            priors = priors_batch[index]
+            if not math.isfinite(scalar_value):
+                raise ValueError("network returned a non-finite value")
+            if priors.shape != (NUM_ACTIONS,) or not torch.isfinite(priors).all():
+                raise ValueError("network returned invalid policy priors")
+            node.priors = [float(x) for x in priors.detach().cpu().tolist()]
+            node.network_value = scalar_value
+            node.expanded = True
+            scalar_values.append(scalar_value)
+        return tuple(scalar_values)
+
+    def _trace_entry(
+        self,
+        root: MCTSNode,
+        node: MCTSNode,
+        path: Sequence[tuple[MCTSNode, int]],
+        leaf_value: float,
+        simulation_index: int,
+    ) -> dict:
+        root_action = path[0][1] if path else None
+        return {
+            "simulation": simulation_index + 1,
+            "root_action": root_action,
+            "root_prior": root.priors[root_action] if root_action is not None else None,
+            "root_action_visits": (
+                root.visit_counts[root_action] if root_action is not None else None
+            ),
+            "root_action_q": root.q_values[root_action] if root_action is not None else None,
+            "leaf_value": float(leaf_value),
+            "leaf_player": node.player_to_move,
+            "leaf_terminal": node.terminal,
+            "leaf_depth": len(path),
+            "leaf_state": {
+                "board": list(node.state.board),
+                "player_to_move": node.state.player_to_move,
+            },
+            "visit_counts_after_backup": list(root.visit_counts),
+            "root_priors_all": list(root.priors),
+            "root_q_values_after_backup": list(root.q_values),
+            "root_puct_scores_after_backup": list(puct_scores(root, self.config.c_puct)),
+        }
 
     def _model_device(self) -> torch.device:
         parameter = next(self.model.parameters(), None)
