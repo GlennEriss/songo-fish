@@ -252,6 +252,7 @@ class SongoMCTS:
         self.model = model
         self.graph_builder = graph_builder
         self.config = config or MCTSConfig()
+        self.last_profile: dict[str, float | int | list[int]] = {}
 
     def search(self, state: "RawSongoState", *, policy_temperature: float = 1.0) -> MCTSResult:
         """Execute la recherche depuis un etat moteur brut non canonicalise.
@@ -418,6 +419,18 @@ class SongoMCTS:
             raise ValueError("seeds must contain one entry per state")
 
         roots = [self._root_node(state) for state in states]
+        self.last_profile = {
+            "engine_s": 0.0,
+            "tree_selection_s": 0.0,
+            "graph_construction_s": 0.0,
+            "tensor_preparation_s": 0.0,
+            "host_to_device_s": 0.0,
+            "model_forward_wall_s": 0.0,
+            "device_to_host_s": 0.0,
+            "backup_s": 0.0,
+            "batch_coordination_s": 0.0,
+            "effective_batch_sizes": [],
+        }
         rngs = [random.Random(seed) for seed in seeds]
         noise_rngs = [np.random.default_rng(seed) for seed in seeds]
         node_counts = [1] * len(roots)
@@ -450,11 +463,19 @@ class SongoMCTS:
                         node = root
                         path: list[tuple[MCTSNode, int]] = []
                         while node.expanded and not node.terminal:
+                            selection_started = time.perf_counter()
                             action = select_puct_action(node, self.config.c_puct, rngs[index])
                             path.append((node, action))
                             child = node.children.get(action)
+                            self.last_profile["tree_selection_s"] += (
+                                time.perf_counter() - selection_started
+                            )
                             if child is None:
+                                engine_started = time.perf_counter()
                                 child = self._transition(node, action)
+                                self.last_profile["engine_s"] += (
+                                    time.perf_counter() - engine_started
+                                )
                                 node.children[action] = child
                                 node_counts[index] += 1
                             node = child
@@ -465,7 +486,12 @@ class SongoMCTS:
                         else:
                             pending.append((index, node, path))
 
-                    values = self._expand_many([node for _, node, _ in pending])
+                    coordination_started = time.perf_counter()
+                    pending_nodes = [node for _, node, _ in pending]
+                    self.last_profile["batch_coordination_s"] += (
+                        time.perf_counter() - coordination_started
+                    )
+                    values = self._expand_many(pending_nodes)
                     leaves = terminal_leaves + [
                         (index, node, path, value)
                         for (index, node, path), value in zip(pending, values)
@@ -474,7 +500,9 @@ class SongoMCTS:
                         if not node.terminal:
                             expanded_counts[index] += 1
                             evaluation_counts[index] += 1
+                        backup_started = time.perf_counter()
                         self._backup(path, leaf_value, node.player_to_move)
+                        self.last_profile["backup_s"] += time.perf_counter() - backup_started
                         if self.config.collect_simulation_trace:
                             traces[index].append(
                                 self._trace_entry(
@@ -609,6 +637,10 @@ class SongoMCTS:
         device = self._model_device()
         from songo_ai.model.srn_network import policy_probabilities
 
+        batch_sizes = self.last_profile.get("effective_batch_sizes")
+        if isinstance(batch_sizes, list):
+            batch_sizes.append(len(nodes))
+
         logits_by_index: list[Optional[torch.Tensor]] = [None] * len(nodes)
         values_by_index: list[Optional[torch.Tensor]] = [None] * len(nodes)
         if hasattr(self.model, "forward_at_depth"):
@@ -616,40 +648,78 @@ class SongoMCTS:
             for index, node in enumerate(nodes):
                 depth_groups.setdefault(node.search_depth, []).append(index)
             for depth, indices in depth_groups.items():
-                graph = self.graph_builder.build_batch([nodes[i].state for i in indices]).to(device)
+                graph_started = time.perf_counter()
+                graph = self.graph_builder.build_batch([nodes[i].state for i in indices])
+                self._profile_add("graph_construction_s", time.perf_counter() - graph_started)
+                transfer_started = time.perf_counter()
+                graph = graph.to(device)
+                self._synchronize(device)
+                self._profile_add("host_to_device_s", time.perf_counter() - transfer_started)
+                forward_started = time.perf_counter()
                 logits, values = self.model.forward_at_depth(graph, depth)
+                self._synchronize(device)
+                self._profile_add("model_forward_wall_s", time.perf_counter() - forward_started)
                 for local, original in enumerate(indices):
                     logits_by_index[original] = logits[local]
                     values_by_index[original] = values.reshape(-1)[local]
         else:
-            graph = self.graph_builder.build_batch([node.state for node in nodes]).to(device)
+            graph_started = time.perf_counter()
+            graph = self.graph_builder.build_batch([node.state for node in nodes])
+            self._profile_add("graph_construction_s", time.perf_counter() - graph_started)
+            transfer_started = time.perf_counter()
+            graph = graph.to(device)
+            self._synchronize(device)
+            self._profile_add("host_to_device_s", time.perf_counter() - transfer_started)
+            forward_started = time.perf_counter()
             logits, values = self.model(graph)
+            self._synchronize(device)
+            self._profile_add("model_forward_wall_s", time.perf_counter() - forward_started)
             flat_values = values.reshape(-1)
             for index in range(len(nodes)):
                 logits_by_index[index] = logits[index]
                 values_by_index[index] = flat_values[index]
 
+        tensor_started = time.perf_counter()
         policy_logits = torch.stack([item for item in logits_by_index if item is not None])
         legal_mask = torch.tensor(
             [node.legal_mask for node in nodes], dtype=torch.bool, device=device
         )
         priors_batch = policy_probabilities(policy_logits, legal_mask)
+        self._synchronize(device)
+        self._profile_add("tensor_preparation_s", time.perf_counter() - tensor_started)
+        d2h_started = time.perf_counter()
+        priors_cpu = priors_batch.detach().cpu().tolist()
+        values_cpu = [
+            None if value is None else float(value.detach().cpu().item())
+            for value in values_by_index
+        ]
+        self._profile_add("device_to_host_s", time.perf_counter() - d2h_started)
         scalar_values = []
         for index, node in enumerate(nodes):
-            value_tensor = values_by_index[index]
-            if value_tensor is None:
+            scalar_value = values_cpu[index]
+            if scalar_value is None:
                 raise RuntimeError("missing batched value output")
-            scalar_value = float(value_tensor.item())
             priors = priors_batch[index]
             if not math.isfinite(scalar_value):
                 raise ValueError("network returned a non-finite value")
             if priors.shape != (NUM_ACTIONS,) or not torch.isfinite(priors).all():
                 raise ValueError("network returned invalid policy priors")
-            node.priors = [float(x) for x in priors.detach().cpu().tolist()]
+            node.priors = [float(x) for x in priors_cpu[index]]
             node.network_value = scalar_value
             node.expanded = True
             scalar_values.append(scalar_value)
         return tuple(scalar_values)
+
+    def _profile_add(self, key: str, value: float) -> None:
+        if key in self.last_profile:
+            current = self.last_profile[key]
+            if isinstance(current, (int, float)):
+                self.last_profile[key] = float(current) + value
+
+    @staticmethod
+    def _synchronize(device: torch.device) -> None:
+        if device.type == "cuda":
+            torch.cuda.synchronize(device)
 
     def _trace_entry(
         self,
