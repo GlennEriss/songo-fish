@@ -35,6 +35,7 @@ def test_lot39_notebook_is_valid_and_has_independent_stages():
  text=json.dumps(notebook)
  for concurrency in (16,32,64,128,256):assert f"'{concurrency}'" in text
  assert notebook["nbformat"]==4 and "lot39_inputs.tar.gz" in text
+ assert "supervised_run" in text and "code de sortie" in text and "actif depuis" in text
 
 def test_lot39_report_is_artifact_driven():
  assert "raw_scaling_results.json" in SCRIPT
