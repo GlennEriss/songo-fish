@@ -211,6 +211,8 @@ def prepare(a: argparse.Namespace) -> None:
 def completed_results(out: Path) -> dict[str, dict]:
     rows: dict[str, dict] = {}
     for path in sorted((out / "shards").glob("*.json")):
+        if path.name.endswith(".checksum.json"):
+            continue
         if checked(path):
             for row in read_json(path)["rows"]:
                 rows[row["state_fingerprint"]] = row
@@ -283,7 +285,9 @@ def run(a: argparse.Namespace) -> None:
         shard_records = remaining[start : start + a.concurrency]
         if not shard_records:
             continue
-        key = f"shard_{start:04d}_{start + len(shard_records) - 1:04d}.json"
+        first_fp = shard_records[0]["fingerprint"][:12]
+        last_fp = shard_records[-1]["fingerprint"][:12]
+        key = f"shard_{first_fp}_{last_fp}.json"
         path = shard_dir / key
         if checked(path):
             continue
@@ -324,7 +328,11 @@ def finalize(a: argparse.Namespace) -> None:
     pilot_path = a.output / "memory_pilot.json"
     if checked(pilot_path):
         run_payloads.append(read_json(pilot_path))
-    run_payloads.extend(read_json(p) for p in sorted((a.output / "shards").glob("*.json")) if checked(p))
+    run_payloads.extend(
+        read_json(p)
+        for p in sorted((a.output / "shards").glob("*.json"))
+        if not p.name.endswith(".checksum.json") and checked(p)
+    )
     common = sorted(set(found) & set(hard_by_fp) & set(ref_by_fp))
     paired = []
     regrets = []
