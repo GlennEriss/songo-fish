@@ -54,6 +54,7 @@ def args() -> argparse.Namespace:
     p.add_argument("--lot41", type=Path, default=Path("data/experiments/lot41_deep_mcts_convergence"))
     p.add_argument("--lot43", type=Path, default=Path("data/experiments/lot43_multi_fidelity_teacher_protocol"))
     p.add_argument("--positions-file", type=Path)
+    p.add_argument("--max-positions", type=int, default=768, help="deterministic compute cap after deduplication")
     p.add_argument("--output", type=Path, default=OUT)
     p.add_argument("--partition", choices=("train", "calibration", "test"))
     p.add_argument("--budget", type=int, choices=BUDGETS)
@@ -84,6 +85,11 @@ def choose_device(name: str) -> torch.device:
 
 
 def load_source(path: Path) -> list[dict]:
+    if not path.is_file():
+        raise FileNotFoundError(
+            f"OOS positions file not found: {path}. Provide a D_RL JSON/JSONL file; "
+            "the repository fallback is data/d_rl/lot11_g1_selected_seed_20260924.jsonl"
+        )
     if path.suffix == ".jsonl":
         raw = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
     else:
@@ -91,15 +97,21 @@ def load_source(path: Path) -> list[dict]:
         raw = payload.get("states") or payload.get("rows") or payload.get("positions") or []
     rows = []
     for i, item in enumerate(raw):
+        if item.get("record_type") == "manifest":
+            continue
         state = item.get("state", item)
-        if "board" not in state or "player_to_move" not in state:
+        metadata = item.get("metadata") or {}
+        if isinstance(state, list):
+            state = {"board": state, "player_to_move": int(metadata.get("player_to_move", 1))}
+        if not isinstance(state, dict) or "board" not in state or "player_to_move" not in state:
             continue
         s = RawSongoState(tuple(state["board"]), int(state["player_to_move"]))
         fp = fingerprint_state(s)
         rows.append({
             "fingerprint": fp, "state": {"board": list(s.board), "player_to_move": s.player_to_move},
-            "game_id": str(item.get("game_id") or item.get("trajectory_id") or f"unknown-{i}"),
-            "ply": item.get("ply"), "source_generator": item.get("source_generator") or item.get("source") or "D_RL",
+            "game_id": str(item.get("game_id") or metadata.get("game_id") or item.get("trajectory_id") or f"unknown-{i}"),
+            "ply": item.get("ply", metadata.get("ply", item.get("move_number"))),
+            "source_generator": item.get("source_generator") or metadata.get("checkpoint_id") or item.get("dataset_family") or "D_RL",
         })
     unique = {r["fingerprint"]: r for r in rows}
     return sorted(unique.values(), key=lambda r: r["fingerprint"])
@@ -128,10 +140,20 @@ def corpus(a: argparse.Namespace) -> None:
     old = {r["state_fingerprint"] for r in original}
     overlap = sorted({r["fingerprint"] for r in rows} & old)
     clean = [r for r in rows if r["fingerprint"] not in old]
+    groups: dict[str, list[dict]] = {}
+    for row in clean:
+        groups.setdefault(row["game_id"], []).append(row)
+    selected: list[dict] = []
+    for group in sorted(groups, key=lambda g: canonical_hash({"seed": a.seed, "group": g})):
+        room = a.max_positions - len(selected)
+        if room <= 0:
+            break
+        selected.extend(sorted(groups[group], key=lambda r: (r.get("ply") is None, r.get("ply") or 0, r["fingerprint"]))[:room])
+    clean = sorted(selected, key=lambda r: r["fingerprint"])
     if not clean:
         raise RuntimeError("independent corpus is empty after duplicate removal")
     write_json(a.output / "overlap_audit.json", {"OOS_OVERLAP_WITH_ORIGINAL_256": len(overlap), "removed_fingerprints": overlap, "resolved_before_experiment": True})
-    write_json(a.output / "independent_corpus_manifest.json", {"count": len(clean), "source": str(a.positions_file), "source_sha256": sha256(a.positions_file), "teacher_labels_used": False, "minimax_labels_used": False, "rows": clean, "fingerprint_sha256": canonical_hash([r["fingerprint"] for r in clean])})
+    write_json(a.output / "independent_corpus_manifest.json", {"count": len(clean), "available_after_deduplication": len(rows) - len(overlap), "compute_cap": a.max_positions, "source": str(a.positions_file), "source_sha256": sha256(a.positions_file), "teacher_labels_used": False, "minimax_labels_used": False, "rows": clean, "fingerprint_sha256": canonical_hash([r["fingerprint"] for r in clean])})
 
 
 def split(a: argparse.Namespace) -> None:
