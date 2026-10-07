@@ -6,7 +6,7 @@ from lot44.splits import group_split, leakage_report
 from run_srn_lot39 import fingerprint_state
 from songo_ai.dataset import RawSongoState
 
-from conftest import ORIGINAL_POSITIONS, require_inputs
+from lot44_test_support import ORIGINAL_POSITIONS, require_inputs
 
 INITIAL = {"board": [5] * 14 + [0, 0], "player_to_move": 1}
 

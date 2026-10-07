@@ -9,7 +9,7 @@ from lot44.features import CLASSIC, COMBINED, FORBIDDEN_COLUMNS, TRAJECTORY, com
 from lot44.labels import deeper_regret, material_label, severity
 from lot44.routers import conservative_route, conservative_thresholds
 
-from conftest import drive_experiments
+from lot44_test_support import drive_experiments
 
 STATE = {"board": [5] * 14 + [0, 0], "player_to_move": 1}
 

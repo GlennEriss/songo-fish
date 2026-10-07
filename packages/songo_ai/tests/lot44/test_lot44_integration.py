@@ -15,7 +15,7 @@ from lot44.search import SearchIdentity, run_search, validate_result
 from lot44.smoke import run_smoke, smoke_inputs
 from run_srn_lot39 import fingerprint_state
 
-from conftest import ORIGINAL_POSITIONS, make_context, require_inputs
+from lot44_test_support import ORIGINAL_POSITIONS, make_context, require_inputs
 
 DECISION_KEYS = (
     "LOT44_VALID", "INDEPENDENT_CORPUS_VALID", "OOS_OVERLAP_WITH_ORIGINAL_256", "TRAIN_SIZE", "CALIBRATION_SIZE", "TEST_SIZE",
