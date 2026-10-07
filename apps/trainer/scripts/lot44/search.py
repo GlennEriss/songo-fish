@@ -160,8 +160,13 @@ def run_search(
     errors: ErrorLog,
     max_shards: int | None = None,
     log: Callable[[str], None] = print,
+    before_write: Callable[[], None] | None = None,
 ) -> dict:
-    """Execute les positions manquantes de ``partition`` au budget donne."""
+    """Execute les positions manquantes de ``partition`` au budget donne.
+
+    ``before_write`` est appele juste avant chaque ecriture de shard (ex. :
+    verification du verrou mono-ecrivain de Lot45) et peut lever pour stopper.
+    """
 
     budget = identity.budget
     directory = shard_dir(out, partition, budget)
@@ -223,6 +228,8 @@ def run_search(
             "memory": memory_snapshot(),
             "rows": rows,
         }
+        if before_write is not None:
+            before_write()
         write_checked_json(directory / name, payload)
         last_artifact = str((directory / name).relative_to(out))
         completed += len(rows)

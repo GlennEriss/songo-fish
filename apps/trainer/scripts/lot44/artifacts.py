@@ -226,7 +226,7 @@ def append_execution(out: Path, entry: dict) -> None:
     write_json(path, manifest)
 
 
-CHECKSUM_EXCLUDE = ("checksums.json", "heartbeat.json", "execution_manifest.json", "experiment_manifest.json", "errors.jsonl")
+CHECKSUM_EXCLUDE = ("checksums.json", "heartbeat.json", "run_lock.json", "execution_manifest.json", "experiment_manifest.json", "errors.jsonl")
 
 
 def artifact_files(root: Path) -> list[Path]:

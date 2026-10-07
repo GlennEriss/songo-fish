@@ -12,10 +12,10 @@ from .paths import REPO_ROOT
 TEST_DIR = "packages/songo_ai/tests/lot44"
 
 
-def run_selftest(out: Path) -> dict:
+def run_selftest(out: Path, test_dirs: tuple[str, ...] = (TEST_DIR,)) -> dict:
     out.mkdir(parents=True, exist_ok=True)
     junit = out / ".lot44_junit.xml"
-    command = [sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", TEST_DIR, f"--junitxml={junit}"]
+    command = [sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", *test_dirs, f"--junitxml={junit}"]
     proc = subprocess.run(command, cwd=REPO_ROOT, capture_output=True, text=True)
     if not junit.is_file():
         raise RuntimeError(f"pytest produced no junit report (rc={proc.returncode}):\n{proc.stdout[-4000:]}\n{proc.stderr[-4000:]}")

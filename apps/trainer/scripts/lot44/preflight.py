@@ -266,6 +266,11 @@ class Preflight:
             raise Lot44FatalError("MODEL_WEIGHTS_CHANGED", "weights changed during preflight")
         return {"MODEL_WEIGHTS_CHANGED": "NO", "parameter_fingerprint": after}
 
+    def extra_checks(self) -> list[tuple[str, Callable[[], dict], bool]]:
+        """Verifications supplementaires des lots derives (nom, fonction, critique)."""
+
+        return []
+
     def run(self) -> dict:
         if self.tmp.exists():
             shutil.rmtree(self.tmp)
@@ -301,12 +306,16 @@ class Preflight:
 
         self.check("FINALIZE", fin)
         self.check("EXPORT", exported)
+        extra = self.extra_checks()
+        for name, fn, critical in extra:
+            self.check(name, fn, critical=critical)
         if model_ready:
             self.check("MODEL_WEIGHTS_UNCHANGED", self.weights_unchanged)
         else:
             self.checks["MODEL_WEIGHTS_UNCHANGED"] = {"status": "FAIL", "critical": True, "error": "model unavailable"}
         shutil.rmtree(self.tmp, ignore_errors=False)
-        failed = [n for n in ORDER if self.checks[n]["critical"] and self.checks[n]["status"] != "PASS"]
+        order = ORDER + tuple(name for name, _, _ in extra)
+        failed = [n for n in order if self.checks[n]["critical"] and self.checks[n]["status"] != "PASS"]
         status = "PASS" if not failed else "FAIL"
         report = {
             "lot": 44,
@@ -314,8 +323,8 @@ class Preflight:
             "code_commit": self.ctx.fingerprints()["code_commit"] if model_ready else None,
             "device": str(self.device) if self.device else self.ctx.device_name,
             "CUDA_AVAILABLE": "YES" if torch.cuda.is_available() else "NO",
-            "checks": {n: self.checks[n] for n in ORDER},
-            "summary": {n: self.checks[n]["status"] for n in ORDER},
+            "checks": {n: self.checks[n] for n in order},
+            "summary": {n: self.checks[n]["status"] for n in order},
             "critical_failures": failed,
             "PREFLIGHT_STATUS": status,
             "SCIENTIFIC_RUN_ALLOWED": "YES" if status == "PASS" else "NO",
