@@ -23,7 +23,7 @@ from songo_ai.training.lot46 import (Lot46Dataset, Lot46Error, atomic_torch_save
                                      rng_state, sha256)
 from songo_ai.training.lot46a import (DurableCheckpointStore, ExperimentConfig, canonical_hash,
     evaluate, load_initial_model, make_optimizer_scheduler, prepare_context, resume_into,
-    run_training, WeightedStatefulSampler, configure_trainable)
+    run_training, validate_scientific_inputs, WeightedStatefulSampler, configure_trainable)
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
 ROOT = REPOSITORY_ROOT / "data/experiments/lot46_g5_training"
@@ -32,6 +32,9 @@ G4 = REPOSITORY_ROOT / "data/experiments/lot35_generator_pool/g4_champion_identi
 DATASET = LOT45 / "dataset/g5_deep_autonomous_reanalysis_v1.jsonl.gz"
 LOT46_INPUT_FILES = (
     G4,
+    Path("data/d_rl/lot11_g1_selected_seed_20260924.jsonl"),
+    Path("data/d_scale_v1/d_strategic_sample/qdiag256.jsonl"),
+    Path("data/experiments/lot25_scale/strategic_manifest.json"),
     Path("data/experiments/lot34r_g4_retry/checkpoints/control/step-08000.pt"),
     Path("data/experiments/lot34r_g4_retry/checkpoints/control/step-12000.pt"),
     Path("data/experiments/lot34r_g4_retry/checkpoints/pool/step-06000.pt"),
@@ -70,14 +73,14 @@ def prepare_inputs(bundle: Path) -> None:
     missing = [str(path) for path in files if not path.is_file()]
     if missing:
         raise FileNotFoundError(f"Lot46 input files missing: {missing}")
-    manifest = {"lot": 46, "purpose": "G4R_FROZEN_BASELINES", "files": {str(p.relative_to(REPOSITORY_ROOT)): sha256(p) for p in files}}
-    manifest_path = REPOSITORY_ROOT / "lot46_input_manifest.json"
+    manifest = {"lot": 46, "purpose": "G4R_FROZEN_BASELINES_AND_LOT46A_SCIENTIFIC_INPUTS", "files": {str(p.relative_to(REPOSITORY_ROOT)): sha256(p) for p in files}}
+    manifest_path = bundle.parent / ".lot46_input_manifest.tmp.json"
     atomic_json(manifest_path, manifest)
     bundle.parent.mkdir(parents=True, exist_ok=True)
     temporary = bundle.with_name(f".{bundle.name}.tmp")
     try:
         with tarfile.open(temporary, "w:gz") as archive:
-            archive.add(manifest_path, arcname=manifest_path.name)
+            archive.add(manifest_path, arcname="lot46_input_manifest.json")
             for path in files:
                 archive.add(path, arcname=str(path.relative_to(REPOSITORY_ROOT)))
         temporary.replace(bundle)
@@ -243,7 +246,10 @@ def repository_audit(out: Path) -> dict:
 
 
 def prepare_a(config_path: Path) -> dict:
-    cfg=ExperimentConfig.load(config_path); ctx=prepare_context(cfg,REPOSITORY_ROOT); out=ctx["output"]; out.mkdir(parents=True,exist_ok=True)
+    cfg=ExperimentConfig.load(config_path)
+    out=Path(cfg.output_directory);out=out if out.is_absolute() else REPOSITORY_ROOT/out;out.mkdir(parents=True,exist_ok=True)
+    validate_scientific_inputs(cfg,REPOSITORY_ROOT,stage="prepare-a",audit_path=out/"lot46a_input_dependency_audit.json")
+    ctx=prepare_context(cfg,REPOSITORY_ROOT)
     code_commit=git_commit()
     audit=repository_audit(out); splits=ctx["splits"]
     memberships={k:{x["fingerprint"] for x in v} for k,v in splits.items()}

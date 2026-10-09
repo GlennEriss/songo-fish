@@ -1,4 +1,5 @@
 import json
+import hashlib
 from dataclasses import replace
 from pathlib import Path
 
@@ -9,7 +10,8 @@ from songo_ai.model import load_srn_checkpoint
 from songo_ai.training.lot46 import Lot46Error, group_aware_split
 from songo_ai.training.lot46a import (DatasetSource, DurableCheckpointStore,
     ExperimentConfig, WeightedStatefulSampler, canonical_hash,
-    configure_trainable, make_optimizer_scheduler, resume_into, run_training, validate_rows)
+    configure_trainable, make_optimizer_scheduler, resume_into, run_training,
+    validate_bundle_manifest, validate_rows, validate_scientific_inputs)
 
 ROOT=Path(__file__).resolve().parents[3]
 CONTROL=ROOT/"configs/lot46a/control_smoke.json"
@@ -99,3 +101,50 @@ def test_resume_refuses_a_different_code_commit(tmp_path,monkeypatch):
     monkeypatch.setattr("songo_ai.training.lot46a.git_commit",lambda root:"different-commit")
     with pytest.raises(Lot46Error,match="REFUSE_RESUME code_commit mismatch"):
         run_training(cfg,ROOT,resume=True)
+
+
+def test_real_strategic_battery_is_present_valid_and_separate(tmp_path):
+    report=validate_scientific_inputs(config(tmp_path),ROOT,stage="integration-test")
+    battery=next(x for x in report["dependencies"] if x["name"]=="strategic_preservation_battery")
+    assert battery["validation_status"]=="PASS" and battery["positions"]==2000
+    assert battery["role"]=="TRAINING_PRESERVATION_PAIRWISE_ONLY"
+    assert report["TRAINING_HOLDOUT_SEPARATION_VALID"]=="YES"
+
+
+def test_missing_battery_has_complete_diagnostic(tmp_path):
+    cfg=replace(config(tmp_path),objective={**config(tmp_path).objective,"strategic_battery":str(tmp_path/"missing.jsonl")})
+    with pytest.raises(Lot46Error,match="MISSING_INPUTS=.*recovery_action"):
+        validate_scientific_inputs(cfg,ROOT,stage="train")
+
+
+def test_wrong_battery_sha_is_rejected(tmp_path):
+    bad=tmp_path/"qdiag256.jsonl";bad.write_text("{}\n")
+    cfg=replace(config(tmp_path),objective={**config(tmp_path).objective,"strategic_battery":str(bad)})
+    with pytest.raises(Lot46Error,match="MISSING_INPUTS"):
+        validate_scientific_inputs(cfg,ROOT,stage="train")
+
+
+def test_incompatible_battery_schema_is_rejected(tmp_path,monkeypatch):
+    bad=tmp_path/"qdiag256.jsonl";bad.write_text("{}\n")
+    monkeypatch.setattr("songo_ai.training.lot46a.QDIAG256_SHA256",hashlib.sha256(bad.read_bytes()).hexdigest())
+    cfg=replace(config(tmp_path),objective={**config(tmp_path).objective,"strategic_battery":str(bad)})
+    with pytest.raises(Lot46Error,match="missing"):
+        validate_scientific_inputs(cfg,ROOT,stage="train")
+
+
+def test_wrong_battery_path_is_not_searched_implicitly(tmp_path):
+    cfg=replace(config(tmp_path),objective={**config(tmp_path).objective,"strategic_battery":"wrong/qdiag256.jsonl"})
+    with pytest.raises(Lot46Error) as error:validate_scientific_inputs(cfg,ROOT,stage="train")
+    assert str(ROOT/"wrong/qdiag256.jsonl") in str(error.value)
+
+
+def test_incomplete_bundle_is_rejected():
+    with pytest.raises(Lot46Error,match="incomplete scientific bundle"):
+        validate_bundle_manifest({"files":{"a":"x","b":"y"}},{"a"})
+
+
+def test_prepare_stage_does_not_require_future_training_battery(tmp_path):
+    cfg=replace(config(tmp_path),objective={**config(tmp_path).objective,"strategic_battery":"missing.jsonl"})
+    report=validate_scientific_inputs(cfg,ROOT,stage="prepare-a")
+    assert report["SCIENTIFIC_INPUTS_READY"]=="YES"
+    assert all(x["name"]!="strategic_preservation_battery" for x in report["dependencies"])

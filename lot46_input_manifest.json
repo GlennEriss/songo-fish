@@ -1,6 +1,8 @@
 {
   "files": {
     "data/d_rl/lot11_g1_selected_seed_20260924.jsonl": "2c7f27b7d1e1e39b409a86320027a5b8a45de52e57112858374623f4fbf35f33",
+    "data/d_scale_v1/d_strategic_sample/qdiag256.jsonl": "e854371afcc162b17e323a062ef0cde96bd7e1041ebe8b794028042b5c0abecc",
+    "data/experiments/lot25_scale/strategic_manifest.json": "337f6eea5613442a0beed2b2bb5998cf9bfacf6af16cf761d5dbd21dc18e19b8",
     "data/experiments/lot34r_g4_retry/checkpoints/control/step-08000.pt": "97ca4bb45d41b84cb84016d607d81598e23c44ea7f1ffea0cc2507120145d03c",
     "data/experiments/lot34r_g4_retry/checkpoints/control/step-12000.pt": "14f0ee224d1e096d0159b07a3c0b8e86082c5224c772254dcae249a1f5067281",
     "data/experiments/lot34r_g4_retry/checkpoints/pool/step-06000.pt": "fbf379dfdc34775cd6109bf6520d2694d2e94ede97ee594250ff01c40e01b05f",
@@ -8,5 +10,5 @@
     "data/experiments/lot35_generator_pool/g4_champion_identity.json": "9d9412447beda44c503fdc97fd794503985fff35d6063c88fb59d85e5991e414"
   },
   "lot": 46,
-  "purpose": "G4R_FROZEN_BASELINES_AND_LOT46A_TEST_FIXTURES"
+  "purpose": "G4R_FROZEN_BASELINES_AND_LOT46A_SCIENTIFIC_INPUTS"
 }

@@ -31,6 +31,8 @@ from songo_ai.training.lot46 import Lot46Error, collate, group_aware_split, reco
 FAMILIES = {"CONTROL", "DEEP_POLICY", "DEEP_POLICY_REPLAY", "VALUE_INDEPENDENT"}
 MODES = {"HEAD_ONLY", "SHARED_TRUNK_TRAINABLE"}
 STATUSES = {"NOT_STARTED", "PREFLIGHT_PASSED", "RUNNING", "INTERRUPTED", "RESUMABLE", "COMPLETED", "FAILED", "INVALID"}
+QDIAG256_SHA256 = "e854371afcc162b17e323a062ef0cde96bd7e1041ebe8b794028042b5c0abecc"
+QDIAG256_MANIFEST = "data/experiments/lot25_scale/strategic_manifest.json"
 
 
 def canonical_hash(value: Any) -> str:
@@ -40,6 +42,82 @@ def canonical_hash(value: Any) -> str:
 def git_commit(root: Path) -> str | None:
     result = subprocess.run(["git", "-C", str(root), "rev-parse", "HEAD"], capture_output=True, text=True)
     return result.stdout.strip() if result.returncode == 0 else None
+
+
+def _dependency(name: str, path: Path, source: str, required_by: list[str], stage: str,
+                expected_sha256: str | None = None) -> dict:
+    available=path.is_file(); actual=sha256(path) if available else None
+    return {"name":name,"path":str(path),"source":source,"required_by":required_by,
+            "required_stage":stage,"expected_sha256":expected_sha256,"actual_sha256":actual,
+            "availability":"AVAILABLE" if available else "MISSING",
+            "validation_status":"PASS" if available and (expected_sha256 is None or actual==expected_sha256) else "FAIL"}
+
+
+def _validate_qdiag_schema(path: Path) -> tuple[bool,str,int]:
+    required={"state","legal_mask","position_hash","q_values","qdiag","qdiag_budget_per_action",
+              "dirichlet","source_dataset","generation_model"}; count=0
+    try:
+        with path.open() as stream:
+            for line_number,line in enumerate(stream,1):
+                if not line.strip(): continue
+                row=json.loads(line); count+=1
+                if not required.issubset(row): return False,f"line {line_number}: missing {sorted(required-set(row))}",count
+                state=row["state"]
+                if not isinstance(state,dict) or len(state.get("board",[]))!=16 or state.get("player_to_move") not in (1,2):
+                    return False,f"line {line_number}: invalid state",count
+                if len(row["legal_mask"])!=7 or len(row["q_values"])!=7:
+                    return False,f"line {line_number}: policy dimensions must be 7",count
+                if row["qdiag"] is not True or row["qdiag_budget_per_action"]!=256 or row["dirichlet"] is not False:
+                    return False,f"line {line_number}: incompatible Qdiag protocol",count
+                if "value_target" in row or "policy_target" in row:
+                    return False,f"line {line_number}: training labels forbidden in preservation battery",count
+    except Exception as exc: return False,f"schema read error: {type(exc).__name__}: {exc}",count
+    return count==2000,("OK" if count==2000 else f"expected 2000 positions, got {count}"),count
+
+
+def validate_scientific_inputs(config: "ExperimentConfig", root: Path, *, stage: str,
+                               audit_path: Path | None = None) -> dict:
+    """Fail-fast, stage-aware audit of immutable scientific inputs."""
+    dependencies=[]; full=stage in {"micro-overfit","train","resume","validate","integration-test"}
+    for role,value in (("policy_checkpoint",config.policy_checkpoint),("value_checkpoint",config.value_checkpoint)):
+        if full:
+            path=Path(value);path=path if path.is_absolute() else root/path
+            dependencies.append(_dependency(role,path,"G4R frozen checkpoint",["load_initial_model"],stage))
+    for source in config.dataset_sources:
+        path=Path(source.path);path=path if path.is_absolute() else root/path
+        dependencies.append(_dependency(f"dataset:{source.target_source}",path,
+            "Lot45" if source.kind=="lot45" else "historical D_RL",["prepare_context","load_sources"],stage))
+    if full and config.candidate_family!="VALUE_INDEPENDENT":
+        battery=Path(config.objective.get("strategic_battery",""));battery=battery if battery.is_absolute() else root/battery
+        dep=_dependency("strategic_preservation_battery",battery,"Lot25 D_STRATEGIC_SAMPLE",
+                        ["prepare_strategic_battery","Correct-and-Preserve"],stage,QDIAG256_SHA256)
+        if dep["validation_status"]=="PASS":
+            valid,detail,count=_validate_qdiag_schema(battery);dep.update({"schema":detail,"positions":count,
+                "role":"TRAINING_PRESERVATION_PAIRWISE_ONLY","validation_status":"PASS" if valid else "FAIL"})
+        dependencies.append(dep)
+        provenance=root/QDIAG256_MANIFEST
+        dependencies.append(_dependency("strategic_battery_provenance",provenance,"Lot25 strategic manifest",
+                            ["scientific provenance audit"],stage,"337f6eea5613442a0beed2b2bb5998cf9bfacf6af16cf761d5dbd21dc18e19b8"))
+    missing=[]
+    for dep in dependencies:
+        if dep["validation_status"]!="PASS":
+            missing.append({"filename":Path(dep["path"]).name,"expected_path":dep["path"],
+                "searched_locations":[dep["path"]],"required_by":dep["required_by"],
+                "source_archive":"lot46_inputs.tar.gz" if "Lot25" in dep["source"] or "G4R" in dep["source"] or "D_RL" in dep["source"] else "lot45_results.tar.gz",
+                "recovery_action":"restore the immutable file from its declared archive and verify SHA256",
+                "reason":dep.get("schema") or dep["availability"]})
+    report={"stage":stage,"dependencies":dependencies,"MISSING_INPUTS":missing,
+            "TRAINING_HOLDOUT_SEPARATION_VALID":"YES",
+            "separation_note":"Qdiag256 is optimization-only pairwise preservation; strategic_holdout remains evaluation-only.",
+            "SCIENTIFIC_INPUTS_READY":"YES" if not missing else "NO"}
+    if audit_path:_write_json(audit_path,report)
+    if missing: raise Lot46Error("MISSING_INPUTS="+json.dumps(missing,sort_keys=True))
+    return report
+
+
+def validate_bundle_manifest(manifest: dict, archive_names: set[str]) -> None:
+    missing=sorted(set(manifest.get("files",{}))-archive_names)
+    if missing: raise Lot46Error(f"incomplete scientific bundle: {missing}")
 
 
 @dataclass(frozen=True)
@@ -436,7 +514,9 @@ def prepare_context(config: ExperimentConfig, root: Path) -> dict:
 
 def run_training(config: ExperimentConfig, root: Path, *, resume: bool=False, stop_after: int | None=None,
                  train_limit: int | None=None) -> dict:
-    ctx=prepare_context(config,root); output=ctx["output"]; output.mkdir(parents=True,exist_ok=True)
+    output=Path(config.output_directory);output=output if output.is_absolute() else root/output;output.mkdir(parents=True,exist_ok=True)
+    validate_scientific_inputs(config,root,stage="resume" if resume else "train",audit_path=output/"lot46a_input_dependency_audit.json")
+    ctx=prepare_context(config,root)
     code_commit=git_commit(root)
     assignment=output/"experiment_assignment.json"
     identity={"experiment_id":config.experiment_id,"output_directory":str(output.resolve()),"config_fingerprint":canonical_hash(config.payload()),
