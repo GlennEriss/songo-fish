@@ -449,7 +449,7 @@ def resume_into(path: Path, *, config: ExperimentConfig, model, optimizer, sched
 
 
 def evaluate(model, rows: list[dict], device: torch.device, batch_size: int=256) -> dict:
-    before=model_fingerprint(model); model.eval(); ce=top=kl=rank=sq=ae=n=labeled=0
+    before=model_fingerprint(model); model.eval(); ce=top=kl=rank=sq=ae=n=labeled=sign_correct=0
     with torch.no_grad():
         for start in range(0,len(rows),batch_size):
             b=collate(rows[start:start+batch_size],device); logits,value=model(b["graph"]); masked=mask_policy_logits(logits,b["legal_mask"])
@@ -459,12 +459,15 @@ def evaluate(model, rows: list[dict], device: torch.device, batch_size: int=256)
             for x,y,m in zip(p,target,b["legal_mask"]):
                 legal=torch.where(m)[0]; rank+=float(torch.equal(legal[torch.argsort(x[legal],descending=True)],legal[torch.argsort(y[legal],descending=True)]))
             vm=b["value_target_available"]
-            if vm.any(): d=value[vm]-b["value_target"][vm];sq+=float(d.square().sum());ae+=float(d.abs().sum());labeled+=int(vm.sum())
+            if vm.any():
+                d=value[vm]-b["value_target"][vm];sq+=float(d.square().sum());ae+=float(d.abs().sum());labeled+=int(vm.sum())
+                sign_correct+=int((torch.sign(value[vm])==torch.sign(b["value_target"][vm])).sum())
             n+=len(target)
     after=model_fingerprint(model)
     if before!=after: raise Lot46Error("validation modified model parameters")
     return {"positions":n,"policy_ce":ce/n,"policy_kl":kl/n,"top1_agreement":top/n,"exact_ranking_agreement":rank/n,
-            "value_mse":sq/labeled if labeled else None,"value_mae":ae/labeled if labeled else None,"value_labeled":labeled,
+            "value_mse":sq/labeled if labeled else None,"value_mae":ae/labeled if labeled else None,
+            "value_sign_accuracy":sign_correct/labeled if labeled else None,"value_labeled":labeled,
             "no_grad_parameter_invariance":True}
 
 
@@ -504,10 +507,13 @@ def step_model(model, optimizer, scheduler, rows: list[dict], config: Experiment
     nonfinite=any(p.grad is not None and not torch.isfinite(p.grad).all() for p in model.parameters())
     if nonfinite: raise Lot46Error("non-finite gradients")
     threshold=float(config.optimizer.get("gradient_clip",1.)); grad=float(torch.nn.utils.clip_grad_norm_([p for p in model.parameters() if p.requires_grad],threshold))
-    optimizer.step(); scheduler.step()
+    optimization_skipped=config.candidate_family=="VALUE_INDEPENDENT" and not bool(vm.any())
+    if not optimization_skipped:
+        optimizer.step(); scheduler.step()
     return {"loss_total":float(total.detach()),"loss_policy":float(policy.detach()),"loss_value":float(value_loss.detach()),
             "loss_correction":float(corr.detach()),"loss_preservation":float(preserve.detach()),"gradient_norm":grad,
-            "gradient_clip":threshold,"nonfinite_gradients":False,"learning_rate":optimizer.param_groups[0]["lr"]}
+            "gradient_clip":threshold,"nonfinite_gradients":False,"optimization_skipped_no_value_labels":optimization_skipped,
+            "value_labels_in_batch":int(vm.sum()),"learning_rate":optimizer.param_groups[0]["lr"]}
 
 
 def load_initial_model(config: ExperimentConfig, root: Path, device: torch.device):
@@ -571,16 +577,22 @@ def run_training(config: ExperimentConfig, root: Path, *, resume: bool=False, st
             code_commit=code_commit)
         step=int(payload["global_step"]); resumed=True
     history=output/"training_history.jsonl"; started=time.perf_counter(); checkpoint_manifest=[]; limit=min(config.max_steps,stop_after or config.max_steps)
+    starting_step=step; sampled_fingerprints=set(); source_sample_counts={s.target_source:0 for s in config.dataset_sources}
     model.train(); before_other=[]
     fixed=ctx["splits"]["validation"][:min(32,len(ctx["splits"]["validation"]))]
     with torch.no_grad():
         b=collate(fixed,device); p0,v0=model(b["graph"]); before_other=(p0.detach().cpu(),v0.detach().cpu())
     while step<limit:
         indices=sampler.next(); batch=[train_rows[i] for i in indices]
+        sampled_fingerprints.update(x["fingerprint"] for x in batch)
+        for item in batch: source_sample_counts[item["target_source"]]=source_sample_counts.get(item["target_source"],0)+1
         sr=[strategic[(step*32+i)%len(strategic)] for i in range(min(32,len(strategic)))] if strategic else None
         metrics=step_model(model,optimizer,scheduler,batch,config,device,sr); step+=1
+        batch_source_counts={}
+        for item in batch: batch_source_counts[item["target_source"]]=batch_source_counts.get(item["target_source"],0)+1
         row={"experiment_id":config.experiment_id,"step":step,"epoch":sampler.epoch,"candidate_family":config.candidate_family,
-             **metrics,"elapsed_seconds":time.perf_counter()-started}
+             **metrics,"batch_source_counts":batch_source_counts,"batch_fingerprints":[x["fingerprint"] for x in batch],
+             "elapsed_seconds":time.perf_counter()-started}
         with history.open("a") as stream: stream.write(json.dumps(row,sort_keys=True)+"\n")
         if step%config.validation_interval==0 or step==limit: _write_json(output/"validation_latest.json",evaluate(model,ctx["splits"]["validation"],device))
         if step%config.checkpoint_interval==0 or step==limit:
@@ -591,13 +603,16 @@ def run_training(config: ExperimentConfig, root: Path, *, resume: bool=False, st
         b=collate(fixed,device); p1,v1=model(b["graph"])
     other_drift=float((v1.cpu()-before_other[1]).abs().max()) if config.candidate_family!="VALUE_INDEPENDENT" else float((p1.cpu()-before_other[0]).abs().max())
     status="COMPLETED" if step==config.max_steps else "RESUMABLE"
-    result={"experiment_id":config.experiment_id,"status":status,"global_step":step,"resumed":resumed,"device":str(device),
+    elapsed=time.perf_counter()-started; executed=step-starting_step
+    result={"experiment_id":config.experiment_id,"status":status,"global_step":step,"steps_executed_this_invocation":executed,"resumed":resumed,"device":str(device),
         "code_commit":code_commit,
         "trainable_parameters":trainable,"training_mode":config.training_mode,"other_head_max_output_drift":other_drift,
         "head_invariance_required":config.training_mode=="HEAD_ONLY","head_invariance_pass":other_drift==0 if config.training_mode=="HEAD_ONLY" else "NOT_APPLICABLE",
         "dataset_fingerprint":ctx["dataset_fingerprint"],"split_fingerprint":ctx["split_fingerprint"],
         "validation":evaluate(model,ctx["splits"]["validation"],device),"checkpoint_durable":bool(store.latest(config.experiment_id)),
-        "samples_per_second":step*config.batch_size/max(time.perf_counter()-started,1e-9),"steps_per_second":step/max(time.perf_counter()-started,1e-9)}
+        "samples_seen_this_invocation":executed*config.batch_size,"unique_states_seen_this_invocation":len(sampled_fingerprints),
+        "source_sample_counts_this_invocation":source_sample_counts,
+        "samples_per_second":executed*config.batch_size/max(elapsed,1e-9),"steps_per_second":executed/max(elapsed,1e-9)}
     _write_json(status_path,result)
     latest=store.latest(config.experiment_id)
     _write_json(output/"candidate_registry.json",{"candidates":[{"candidate_id":config.experiment_id,"family":config.candidate_family,

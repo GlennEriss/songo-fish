@@ -24,6 +24,8 @@ from songo_ai.training.lot46 import (Lot46Dataset, Lot46Error, atomic_torch_save
 from songo_ai.training.lot46a import (DurableCheckpointStore, ExperimentConfig, canonical_hash,
     architecture_fingerprint, evaluate, load_initial_model, make_optimizer_scheduler, prepare_context, resume_into,
     run_training, validate_scientific_inputs, WeightedStatefulSampler, configure_trainable)
+from songo_ai.training.lot46b import (pilot_export, pilot_prepare, pilot_report,
+    pilot_resume_test, pilot_run, pilot_status, pilot_validate)
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
 ROOT = REPOSITORY_ROOT / "data/experiments/lot46_g5_training"
@@ -429,9 +431,28 @@ def finalize_a(config_path: Path) -> dict:
 
 
 def main() -> None:
-    stages=("prepare-inputs","audit","plan","smoke","preflight","prepare","prepare-a","micro-overfit","train","resume","validate","inspect-checkpoint","status","resume-test","finalize-a","export-a")
-    p = argparse.ArgumentParser(description=__doc__); p.add_argument("--stage", choices=stages, default="prepare"); p.add_argument("--output", type=Path, default=ROOT); p.add_argument("--bundle", type=Path, default=Path("data/colab_bridge/lot46_inputs.tar.gz")); p.add_argument("--config",type=Path); a = p.parse_args()
+    stages=("prepare-inputs","audit","plan","smoke","preflight","prepare","prepare-a","micro-overfit","train","resume","validate","inspect-checkpoint","status","resume-test","finalize-a","export-a",
+            "pilot-prepare","pilot-run","pilot-resume","pilot-validate","pilot-status","pilot-report","pilot-resume-test","pilot-export")
+    p = argparse.ArgumentParser(description=__doc__); p.add_argument("--stage", choices=stages, default="prepare"); p.add_argument("--output", type=Path, default=ROOT); p.add_argument("--bundle", type=Path, default=Path("data/colab_bridge/lot46_inputs.tar.gz")); p.add_argument("--config",type=Path)
+    p.add_argument("--configs",type=Path,nargs="*"); p.add_argument("--lot46a-output",type=Path); p.add_argument("--lot46a-export",type=Path); p.add_argument("--stop-after",type=int)
+    a = p.parse_args()
     if a.stage == "prepare-inputs": prepare_inputs(a.bundle); return
+    if a.stage.startswith("pilot-"):
+        if a.stage == "pilot-export":
+            if not a.configs or len(a.configs) != 4: raise Lot46Error("--stage pilot-export requires exactly four --configs")
+            result=pilot_export(a.configs,REPOSITORY_ROOT,a.bundle)
+        else:
+            if not a.config: raise Lot46Error(f"--stage {a.stage} requires --config")
+            if a.stage == "pilot-prepare":
+                if not a.lot46a_output or not a.lot46a_export: raise Lot46Error("pilot-prepare requires --lot46a-output and --lot46a-export")
+                result=pilot_prepare(a.config,REPOSITORY_ROOT,a.lot46a_output,a.lot46a_export)
+            elif a.stage == "pilot-run": result=pilot_run(a.config,REPOSITORY_ROOT,stop_after=a.stop_after)
+            elif a.stage == "pilot-resume": result=pilot_run(a.config,REPOSITORY_ROOT,resume=True)
+            elif a.stage == "pilot-validate": result=pilot_validate(a.config,REPOSITORY_ROOT)
+            elif a.stage == "pilot-status": result=pilot_status(a.config,REPOSITORY_ROOT)
+            elif a.stage == "pilot-report": result=pilot_report(a.config,REPOSITORY_ROOT)
+            else: result=pilot_resume_test(a.config,REPOSITORY_ROOT)
+        print(json.dumps(result,indent=2,default=str));return
     if a.stage in {"prepare-a","micro-overfit","train","resume","validate","inspect-checkpoint","status","resume-test","finalize-a","export-a"}:
         if not a.config: raise Lot46Error(f"--stage {a.stage} requires --config")
         if a.stage=="prepare-a": result=prepare_a(a.config)
