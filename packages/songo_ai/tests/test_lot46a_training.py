@@ -64,6 +64,15 @@ def test_value_contract_rejects_non_terminal_and_missing_fake_zero():
     with pytest.raises(Lot46Error):validate_rows([row])
 
 
+def test_value_contract_accepts_only_proven_terminal_aggregate():
+    row={"visit_counts":[1,0,0,0,0,0,0],"legal_mask":[1]*7,"policy_target":[1.,0,0,0,0,0,0],
+         "value_target_available":True,"z_mean":1/3,"z_counts":{"win":2,"draw":0,"loss":1,"unknown":0},
+         "z_perspective":"player_to_move","target_budget":32768,"target_source":"LOT45_MCTS32768"}
+    assert validate_rows([row])["value_labeled"]==1
+    row["z_mean"]=.5
+    with pytest.raises(Lot46Error,match="inconsistent"):validate_rows([row])
+
+
 def test_global_split_prevents_cross_corpus_state_leakage():
     rows=[{"fingerprint":"same","split_group":"game-a","holdout":True},{"fingerprint":"same","split_group":"game-a"},{"fingerprint":"other","split_group":"game-b"}]
     split=group_aware_split(rows);assert all(x["fingerprint"]=="same" for x in split["strategic_holdout"])

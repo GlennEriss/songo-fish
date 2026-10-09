@@ -277,6 +277,7 @@ def _canonical_reanalysis(row: dict, source: DatasetSource) -> dict:
     value = row.get("z_mean", row.get("value_target")) if value_available else None
     return {"fingerprint": fp, "state": state, "legal_mask": legal, "visit_counts": visits,
             "policy_target": target, "value_target_available": value_available, "z_mean": value,
+            "z_counts": row.get("z_counts"), "z_perspective": row.get("z_perspective"),
             "split_group": row.get("split_group") or row.get("source_game_id") or f"state:{fp}",
             "holdout": bool(row.get("holdout", False)), "target_source": source.target_source,
             "target_budget": row.get("simulations", row.get("mcts_budget", source.target_budget)),
@@ -327,7 +328,25 @@ def validate_rows(rows: Iterable[dict]) -> dict:
         if target is None or any(abs(a-b) > 1e-6 for a,b in zip(target,row["policy_target"])): raise Lot46Error("invalid Policy target")
         if row["value_target_available"]:
             z = row["z_mean"]
-            if z not in (-1, 0, 1, -1.0, 0.0, 1.0): raise Lot46Error(f"terminal z outside {{-1,0,1}}: {z}")
+            counts=row.get("z_counts")
+            if counts is not None:
+                if not isinstance(counts,dict) or set(counts)!={"win","draw","loss","unknown"}:
+                    raise Lot46Error(f"invalid aggregated terminal z_counts: {counts}")
+                if any(not isinstance(counts[k],int) or counts[k]<0 for k in counts):
+                    raise Lot46Error(f"invalid aggregated terminal counts: {counts}")
+                known=counts["win"]+counts["draw"]+counts["loss"]
+                if known<=0:
+                    raise Lot46Error(f"aggregated Value target contains no known terminal result: {counts}")
+                occurrences=row.get("source_occurrence_count")
+                if occurrences is not None and sum(counts.values())!=occurrences:
+                    raise Lot46Error(f"z_counts do not match source occurrences: {counts} != {occurrences}")
+                expected=(counts["win"]-counts["loss"])/known
+                if not math.isfinite(float(z)) or abs(float(z)-expected)>1e-9:
+                    raise Lot46Error(f"aggregated terminal z_mean inconsistent with z_counts: {z} != {expected}")
+                if row.get("z_perspective")!="player_to_move":
+                    raise Lot46Error(f"unsupported z perspective: {row.get('z_perspective')}")
+            elif z not in (-1, 0, 1, -1.0, 0.0, 1.0):
+                raise Lot46Error(f"non-aggregated terminal z outside {{-1,0,1}}: {z}")
             labeled += 1
         elif row["z_mean"] is not None: raise Lot46Error("missing Value target contains a numeric label")
         budgets[str(row["target_budget"])] = budgets.get(str(row["target_budget"]), 0) + 1
