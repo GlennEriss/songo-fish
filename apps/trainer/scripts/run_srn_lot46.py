@@ -244,6 +244,7 @@ def repository_audit(out: Path) -> dict:
 
 def prepare_a(config_path: Path) -> dict:
     cfg=ExperimentConfig.load(config_path); ctx=prepare_context(cfg,REPOSITORY_ROOT); out=ctx["output"]; out.mkdir(parents=True,exist_ok=True)
+    code_commit=git_commit()
     audit=repository_audit(out); splits=ctx["splits"]
     memberships={k:{x["fingerprint"] for x in v} for k,v in splits.items()}
     overlaps={"train_validation":len(memberships["train"]&memberships["validation"]),
@@ -254,13 +255,13 @@ def prepare_a(config_path: Path) -> dict:
              "limitations":"split_group is used when present; physical fingerprint is authoritative across all sources"}
     atomic_json(out/"lot46a_dataset_audit.json",{**ctx["dataset_audit"],**ctx["source_audit"],"dataset_fingerprint":ctx["dataset_fingerprint"]})
     atomic_json(out/"lot46a_leakage_audit.json",leakage)
-    plan={"candidate_families":sorted(["CONTROL","DEEP_POLICY","DEEP_POLICY_REPLAY","VALUE_INDEPENDENT"]),
+    plan={"code_commit":code_commit,"candidate_families":sorted(["CONTROL","DEEP_POLICY","DEEP_POLICY_REPLAY","VALUE_INDEPENDENT"]),
           "active_experiment":cfg.payload(),"training_budgets":{"optimizer_steps":cfg.max_steps,"examples_seen":cfg.max_steps*cfg.batch_size},
           "optimizer_settings":cfg.optimizer,"scheduler":cfg.scheduler,"validation_schedule":cfg.validation_interval,
           "checkpoint_schedule":cfg.checkpoint_interval,"gpu_requirements":"CUDA for scientific runs; CPU for deterministic tests",
           "estimated_runtime":"NOT_ESTIMATED_UNTIL_PILOT","full_training_confirmed":cfg.confirm_full_training}
     atomic_json(out/"lot46a_training_plan.json",plan)
-    registry={"candidates":[{"candidate_id":cfg.experiment_id,"family":cfg.candidate_family,"initial_checkpoint":cfg.initial_checkpoint,
+    registry={"code_commit":code_commit,"candidates":[{"candidate_id":cfg.experiment_id,"family":cfg.candidate_family,"initial_checkpoint":cfg.initial_checkpoint,
         "training_config":cfg.payload(),"dataset_sources":[asdict_source(x) for x in cfg.dataset_sources],"split_fingerprint":ctx["split_fingerprint"],
         "checkpoint_paths":[],"training_status":"PREFLIGHT_PASSED","validation_status":"NOT_STARTED"}]}
     atomic_json(out/"candidate_registry.json",registry); atomic_json(out/"configuration.json",cfg.payload())
@@ -394,7 +395,7 @@ def main() -> None:
         elif a.stage=="validate":
             cfg=ExperimentConfig.load(a.config);ctx=prepare_context(cfg,REPOSITORY_ROOT);device=torch.device("cuda" if cfg.device=="cuda" and torch.cuda.is_available() else "cpu");model,fp=load_initial_model(cfg,REPOSITORY_ROOT,device);configure_trainable(model,cfg.candidate_family,cfg.training_mode);opt,sch=make_optimizer_scheduler(model,cfg);sampler=WeightedStatefulSampler(ctx["splits"]["train"],{s.target_source:s.weight for s in cfg.dataset_sources},cfg.seed,cfg.batch_size);store=DurableCheckpointStore(ctx["output"]/"local_checkpoints",ctx["output"]/"durable_checkpoints");latest=store.latest(cfg.experiment_id)
             if not latest:raise Lot46Error("no checkpoint to validate")
-            resume_into(latest[0],config=cfg,model=model,optimizer=opt,scheduler=sch,sampler=sampler,dataset_fingerprint=ctx["dataset_fingerprint"],split_fingerprint=ctx["split_fingerprint"],initial_fingerprint=fp);result=evaluate(model,ctx["splits"]["validation"],device);atomic_json(ctx["output"]/"validation.json",result)
+            resume_into(latest[0],config=cfg,model=model,optimizer=opt,scheduler=sch,sampler=sampler,dataset_fingerprint=ctx["dataset_fingerprint"],split_fingerprint=ctx["split_fingerprint"],initial_fingerprint=fp,code_commit=git_commit());result=evaluate(model,ctx["splits"]["validation"],device);atomic_json(ctx["output"]/"validation.json",result)
         elif a.stage=="inspect-checkpoint": result=inspect_checkpoint_a(a.config)
         elif a.stage=="status":
             cfg=ExperimentConfig.load(a.config);out=Path(cfg.output_directory);out=out if out.is_absolute() else REPOSITORY_ROOT/out;result=json.loads((out/"status.json").read_text()) if (out/"status.json").is_file() else {"status":"NOT_STARTED"}

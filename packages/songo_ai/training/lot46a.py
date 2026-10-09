@@ -306,6 +306,7 @@ class DurableCheckpointStore:
         if sha256(remote_tmp)!=digest: remote_tmp.unlink(missing_ok=True); raise Lot46Error("durable checkpoint checksum mismatch")
         os.replace(remote_tmp,remote)
         manifest={"experiment_id":payload["experiment_id"],"step":step,"file":name,"sha256":digest,"size":remote.stat().st_size,
+                  "code_commit":payload.get("code_commit"),
                   "status":"COMMITTED","published_at":time.time()}
         _write_json(self.durable/f"checkpoint-{step:08d}.manifest.json",manifest)
         return {**manifest,"local_path":str(local),"durable_path":str(remote),"CHECKPOINT_DURABLE":"YES"}
@@ -334,14 +335,16 @@ def checkpoint_payload(*, config: ExperimentConfig, model, optimizer, scheduler,
 
 
 def resume_into(path: Path, *, config: ExperimentConfig, model, optimizer, scheduler, sampler,
-                dataset_fingerprint: str, split_fingerprint: str, initial_fingerprint: str) -> dict:
+                dataset_fingerprint: str, split_fingerprint: str, initial_fingerprint: str,
+                code_commit: str | None = None) -> dict:
     payload=torch.load(path,map_location="cpu",weights_only=False)
     checks={"checkpoint_type":payload.get("checkpoint_type")=="songo_lot46a_training",
         "experiment_id":payload.get("experiment_id")==config.experiment_id,
         "training_config":payload.get("training_config_fingerprint")==canonical_hash(config.payload()),
         "dataset":payload.get("dataset_fingerprint")==dataset_fingerprint,"split":payload.get("split_fingerprint")==split_fingerprint,
         "initial":payload.get("initial_checkpoint_fingerprint")==initial_fingerprint,
-        "architecture":payload.get("architecture_fingerprint")==architecture_fingerprint(model)}
+        "architecture":payload.get("architecture_fingerprint")==architecture_fingerprint(model),
+        "code_commit":payload.get("code_commit")==code_commit}
     if not all(checks.values()): raise Lot46Error(f"REFUSE_RESUME incompatible checkpoint: {checks}")
     model.load_state_dict(payload["model_state_dict"]); optimizer.load_state_dict(payload["optimizer_state_dict"])
     scheduler.load_state_dict(payload["scheduler_state_dict"]); sampler.load_state_dict(payload["sampler_state"]); restore_rng(payload["rng_state"])
@@ -434,9 +437,15 @@ def prepare_context(config: ExperimentConfig, root: Path) -> dict:
 def run_training(config: ExperimentConfig, root: Path, *, resume: bool=False, stop_after: int | None=None,
                  train_limit: int | None=None) -> dict:
     ctx=prepare_context(config,root); output=ctx["output"]; output.mkdir(parents=True,exist_ok=True)
+    code_commit=git_commit(root)
     assignment=output/"experiment_assignment.json"
-    identity={"experiment_id":config.experiment_id,"output_directory":str(output.resolve()),"config_fingerprint":canonical_hash(config.payload())}
-    if assignment.is_file() and json.loads(assignment.read_text())!=identity: raise Lot46Error("experiment output is assigned to a different configuration")
+    identity={"experiment_id":config.experiment_id,"output_directory":str(output.resolve()),"config_fingerprint":canonical_hash(config.payload()),
+              "code_commit":code_commit}
+    if assignment.is_file():
+        assigned=json.loads(assignment.read_text())
+        if resume and assigned.get("code_commit") != code_commit:
+            raise Lot46Error(f"REFUSE_RESUME code_commit mismatch: initial={assigned.get('code_commit')} current={code_commit}")
+        if assigned!=identity: raise Lot46Error("experiment output is assigned to a different configuration")
     _write_json(assignment,identity)
     status_path=output/"status.json"
     if status_path.is_file() and not resume:
@@ -459,7 +468,8 @@ def run_training(config: ExperimentConfig, root: Path, *, resume: bool=False, st
         latest=store.latest(config.experiment_id)
         if latest is None: raise Lot46Error("no valid durable checkpoint to resume")
         payload=resume_into(latest[0],config=config,model=model,optimizer=optimizer,scheduler=scheduler,sampler=sampler,
-            dataset_fingerprint=ctx["dataset_fingerprint"],split_fingerprint=ctx["split_fingerprint"],initial_fingerprint=initial_fp)
+            dataset_fingerprint=ctx["dataset_fingerprint"],split_fingerprint=ctx["split_fingerprint"],initial_fingerprint=initial_fp,
+            code_commit=code_commit)
         step=int(payload["global_step"]); resumed=True
     history=output/"training_history.jsonl"; started=time.perf_counter(); checkpoint_manifest=[]; limit=min(config.max_steps,stop_after or config.max_steps)
     model.train(); before_other=[]
@@ -483,6 +493,7 @@ def run_training(config: ExperimentConfig, root: Path, *, resume: bool=False, st
     other_drift=float((v1.cpu()-before_other[1]).abs().max()) if config.candidate_family!="VALUE_INDEPENDENT" else float((p1.cpu()-before_other[0]).abs().max())
     status="COMPLETED" if step==config.max_steps else "RESUMABLE"
     result={"experiment_id":config.experiment_id,"status":status,"global_step":step,"resumed":resumed,"device":str(device),
+        "code_commit":code_commit,
         "trainable_parameters":trainable,"training_mode":config.training_mode,"other_head_max_output_drift":other_drift,
         "head_invariance_required":config.training_mode=="HEAD_ONLY","head_invariance_pass":other_drift==0 if config.training_mode=="HEAD_ONLY" else "NOT_APPLICABLE",
         "dataset_fingerprint":ctx["dataset_fingerprint"],"split_fingerprint":ctx["split_fingerprint"],
@@ -491,6 +502,7 @@ def run_training(config: ExperimentConfig, root: Path, *, resume: bool=False, st
     _write_json(status_path,result)
     latest=store.latest(config.experiment_id)
     _write_json(output/"candidate_registry.json",{"candidates":[{"candidate_id":config.experiment_id,"family":config.candidate_family,
+        "code_commit":code_commit,
         "initial_checkpoint":config.initial_checkpoint,"training_config":config.payload(),"dataset_sources":[asdict(x) for x in config.dataset_sources],
         "split_fingerprint":ctx["split_fingerprint"],"checkpoint_paths":[str(latest[0])] if latest else [],
         "training_status":status,"validation_status":"COMPLETED"}]})

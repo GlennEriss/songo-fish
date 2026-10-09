@@ -9,7 +9,7 @@ from songo_ai.model import load_srn_checkpoint
 from songo_ai.training.lot46 import Lot46Error, group_aware_split
 from songo_ai.training.lot46a import (DatasetSource, DurableCheckpointStore,
     ExperimentConfig, WeightedStatefulSampler, canonical_hash,
-    configure_trainable, make_optimizer_scheduler, run_training, validate_rows)
+    configure_trainable, make_optimizer_scheduler, resume_into, run_training, validate_rows)
 
 ROOT=Path(__file__).resolve().parents[3]
 CONTROL=ROOT/"configs/lot46a/control_smoke.json"
@@ -91,3 +91,11 @@ def test_multi_experiment_has_no_artifact_collision(tmp_path):
     assert (Path(a.output_directory)/"training_history.jsonl").is_file()
     assert (Path(b.output_directory)/"training_history.jsonl").is_file()
     assert Path(a.output_directory)!=Path(b.output_directory)
+
+
+def test_resume_refuses_a_different_code_commit(tmp_path,monkeypatch):
+    cfg=config(tmp_path,"LOT46A_COMMIT_PIN",2)
+    run_training(cfg,ROOT,stop_after=1)
+    monkeypatch.setattr("songo_ai.training.lot46a.git_commit",lambda root:"different-commit")
+    with pytest.raises(Lot46Error,match="REFUSE_RESUME code_commit mismatch"):
+        run_training(cfg,ROOT,resume=True)
