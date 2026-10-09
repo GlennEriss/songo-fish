@@ -5,8 +5,18 @@ import pytest
 import torch
 
 from songo_ai.training.lot46 import (Lot46Error, atomic_torch_save,
-                                     group_aware_split, lot46_loss,
+                                     checkpoint_diagnostic, group_aware_split, lot46_loss,
                                      reconstruct_policy_target)
+from songo_ai.training.lot46 import sha256
+
+ROOT = Path(__file__).resolve().parents[3]
+CHECKPOINT = ROOT / "data/experiments/lot34r_g4_retry/checkpoints/pool/step-06000.pt"
+IDENTITY = ROOT / "data/experiments/lot35_generator_pool/g4_champion_identity.json"
+
+
+def expected():
+    item = json.loads(IDENTITY.read_text())["candidates"]["POOL"]
+    return item["policy_fingerprint"], item["architecture_fingerprint"]
 
 
 def test_raw_visits_temperature_and_legal_mask():
@@ -39,3 +49,55 @@ def test_checkpoint_atomic_round_trip(tmp_path: Path):
     atomic_torch_save(payload, path)
     assert torch.load(path, weights_only=False)["global_step"] == 3
     assert not list(tmp_path.glob("*.tmp-*"))
+
+
+def test_checkpoint_diagnostic_success_and_forward():
+    digest, architecture = expected()
+    report = checkpoint_diagnostic(name="POOL_G4R_POLICY", expected_path=CHECKPOINT,
+        expected_sha256=digest, expected_architecture=architecture, repository_root=ROOT)
+    assert report["CHECKPOINT_STATUS"] == "PASS"
+    assert report["CHECKPOINT_LOAD_VALID"] and report["CHECKPOINT_FORWARD_VALID"]
+    assert report["CHECKPOINT_FILE_SIZE"] > 0
+
+
+@pytest.mark.parametrize("path", ["missing.pt", "wrong/directory/model.pt"])
+def test_checkpoint_diagnostic_missing_or_incorrect_path(path):
+    report = checkpoint_diagnostic(name="missing", expected_path=path, expected_sha256="0" * 64,
+        expected_architecture="0" * 64, repository_root=ROOT)
+    assert report["CHECKPOINT_STATUS"] == "FAIL" and not report["CHECKPOINT_EXISTS"]
+    assert report["CHECKPOINT_ERROR_TYPE"] == "FileNotFoundError" and report["CHECKPOINT_TRACEBACK"]
+
+
+def test_checkpoint_diagnostic_wrong_sha():
+    _, architecture = expected()
+    report = checkpoint_diagnostic(name="bad-sha", expected_path=CHECKPOINT, expected_sha256="0" * 64,
+        expected_architecture=architecture, repository_root=ROOT)
+    assert not report["CHECKPOINT_SHA256_VALID"]
+    assert report["CHECKPOINT_ERROR_TYPE"] == "Lot46Error"
+
+
+def test_checkpoint_diagnostic_corrupt_format(tmp_path: Path):
+    path = tmp_path / "corrupt.pt"; path.write_bytes(b"not a torch checkpoint")
+    _, architecture = expected()
+    report = checkpoint_diagnostic(name="corrupt", expected_path=path, expected_sha256=sha256(path),
+        expected_architecture=architecture, repository_root=ROOT)
+    assert report["CHECKPOINT_SHA256_VALID"] and not report["CHECKPOINT_FORMAT_VALID"]
+    assert report["CHECKPOINT_ERROR_MESSAGE"] and report["CHECKPOINT_TRACEBACK"]
+
+
+def test_checkpoint_diagnostic_architecture_mismatch():
+    digest, _ = expected()
+    report = checkpoint_diagnostic(name="architecture", expected_path=CHECKPOINT, expected_sha256=digest,
+        expected_architecture="0" * 64, repository_root=ROOT)
+    assert report["CHECKPOINT_FORMAT_VALID"] and not report["CHECKPOINT_ARCHITECTURE_VALID"]
+
+
+def test_checkpoint_diagnostic_incompatible_state_dict(tmp_path: Path):
+    payload = torch.load(CHECKPOINT, map_location="cpu", weights_only=False)
+    payload["model_state_dict"].pop(next(iter(payload["model_state_dict"])))
+    path = tmp_path / "incompatible.pt"; torch.save(payload, path)
+    _, architecture = expected()
+    report = checkpoint_diagnostic(name="state-dict", expected_path=path, expected_sha256=sha256(path),
+        expected_architecture=architecture, repository_root=ROOT)
+    assert report["CHECKPOINT_SHA256_VALID"] and not report["CHECKPOINT_LOAD_VALID"]
+    assert report["CHECKPOINT_ERROR_TYPE"] == "RuntimeError"
