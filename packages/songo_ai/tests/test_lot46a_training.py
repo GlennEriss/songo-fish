@@ -168,3 +168,35 @@ def test_cuda_main_training_is_valid_smoke_evidence():
     assert passed and evidence["source"]=="main_training_status" and evidence["global_step"]==40
     status["device"]="cpu"
     assert cuda_training_evidence(status,latest,None)[0] is False
+
+
+def test_final_checkpoint_audit_loads_finite_and_is_idempotent(tmp_path):
+    from run_srn_lot46 import audit_final_checkpoint
+    cfg=config(tmp_path,"LOT46A_FINAL_AUDIT",1);run_training(cfg,ROOT)
+    out=Path(cfg.output_directory);status=json.loads((out/"status.json").read_text());assignment=json.loads((out/"experiment_assignment.json").read_text())
+    latest=DurableCheckpointStore(out/"local_checkpoints",out/"durable_checkpoints").latest(cfg.experiment_id)
+    first=audit_final_checkpoint(cfg,status,assignment,latest);second=audit_final_checkpoint(cfg,status,assignment,latest)
+    assert first["status"]==second["status"]=="PASS"
+    assert first["sha256_before"]==first["sha256_after"]==second["sha256_after"]
+    assert all(first["checks"].values())
+
+
+def test_final_checkpoint_audit_rejects_missing_and_wrong_identity(tmp_path):
+    from run_srn_lot46 import audit_final_checkpoint
+    cfg=config(tmp_path,"LOT46A_FINAL_BAD",1)
+    assert audit_final_checkpoint(cfg,None,None,None)["status"]=="FAIL"
+    run_training(cfg,ROOT);out=Path(cfg.output_directory);status=json.loads((out/"status.json").read_text());assignment=json.loads((out/"experiment_assignment.json").read_text())
+    latest=DurableCheckpointStore(out/"local_checkpoints",out/"durable_checkpoints").latest(cfg.experiment_id)
+    status["experiment_id"]="OTHER"
+    audit=audit_final_checkpoint(cfg,status,assignment,latest)
+    assert audit["status"]=="FAIL" and audit["checks"]["experiment_id"] is False
+
+
+def test_final_checkpoint_audit_rejects_corrupt_checkpoint(tmp_path):
+    from run_srn_lot46 import audit_final_checkpoint
+    cfg=config(tmp_path,"LOT46A_FINAL_CORRUPT",1);run_training(cfg,ROOT)
+    out=Path(cfg.output_directory);status=json.loads((out/"status.json").read_text());assignment=json.loads((out/"experiment_assignment.json").read_text())
+    latest=DurableCheckpointStore(out/"local_checkpoints",out/"durable_checkpoints").latest(cfg.experiment_id)
+    path,manifest=latest;path.write_bytes(b"corrupt")
+    audit=audit_final_checkpoint(cfg,status,assignment,(path,manifest))
+    assert audit["status"]=="FAIL" and audit["error_type"]
