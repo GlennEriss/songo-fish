@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import argparse
 import json
+import hashlib
 import platform
 import subprocess
 import sys
+import tarfile
 from pathlib import Path
 
 import torch
@@ -20,6 +22,13 @@ ROOT = Path("data/experiments/lot46_g5_training")
 LOT45 = Path("data/experiments/lot45_g5_target_generation")
 G4 = Path("data/experiments/lot35_generator_pool/g4_champion_identity.json")
 DATASET = LOT45 / "dataset/g5_deep_autonomous_reanalysis_v1.jsonl.gz"
+LOT46_INPUT_FILES = (
+    G4,
+    Path("data/experiments/lot34r_g4_retry/checkpoints/control/step-08000.pt"),
+    Path("data/experiments/lot34r_g4_retry/checkpoints/control/step-12000.pt"),
+    Path("data/experiments/lot34r_g4_retry/checkpoints/pool/step-06000.pt"),
+    Path("data/experiments/lot34r_g4_retry/checkpoints/pool/step-12000.pt"),
+)
 
 
 def atomic_json(path: Path, payload: dict) -> None:
@@ -42,6 +51,29 @@ def not_run(reason: str) -> dict:
     return {"status": "NOT_RUN", "reason": reason}
 
 
+def prepare_inputs(bundle: Path) -> None:
+    """Construit le petit bundle Colab Lot46, distinct des resultats Lot45."""
+    missing = [str(path) for path in LOT46_INPUT_FILES if not path.is_file()]
+    if missing:
+        raise FileNotFoundError(f"Lot46 input files missing: {missing}")
+    manifest = {"lot": 46, "purpose": "G4R_FROZEN_BASELINES", "files": {str(p): sha256(p) for p in LOT46_INPUT_FILES}}
+    manifest_path = Path("lot46_input_manifest.json")
+    atomic_json(manifest_path, manifest)
+    bundle.parent.mkdir(parents=True, exist_ok=True)
+    temporary = bundle.with_name(f".{bundle.name}.tmp")
+    try:
+        with tarfile.open(temporary, "w:gz") as archive:
+            archive.add(manifest_path, arcname=manifest_path.name)
+            for path in LOT46_INPUT_FILES:
+                archive.add(path, arcname=str(path))
+        temporary.replace(bundle)
+    finally:
+        if temporary.exists(): temporary.unlink()
+        if manifest_path.exists(): manifest_path.unlink()
+    Path(str(bundle) + ".sha256").write_text(f"{sha256(bundle)}  {bundle.name}\n")
+    print(json.dumps({"bundle": str(bundle), "sha256": sha256(bundle), "files": len(LOT46_INPUT_FILES)}, indent=2))
+
+
 def initialize_artifacts(out: Path, reason: str) -> None:
     for name in ("training_history.jsonl",):
         (out / name).touch(exist_ok=True)
@@ -57,10 +89,12 @@ def audit(out: Path) -> bool:
     ids = candidates()
     model_checks = {}
     for key, item in ids.items():
+        policy_path, value_path = Path(item["policy_checkpoint"]), Path(item["value_checkpoint"])
         model_checks[key] = {
             "policy_checkpoint": item["policy_checkpoint"], "value_checkpoint": item["value_checkpoint"],
             "policy_expected": item["policy_fingerprint"], "value_expected": item["value_fingerprint"],
-            "policy_actual": sha256(Path(item["policy_checkpoint"])), "value_actual": sha256(Path(item["value_checkpoint"])),
+            "policy_actual": sha256(policy_path) if policy_path.is_file() else None,
+            "value_actual": sha256(value_path) if value_path.is_file() else None,
         }
         model_checks[key]["valid"] = (model_checks[key]["policy_expected"] == model_checks[key]["policy_actual"] and
                                        model_checks[key]["value_expected"] == model_checks[key]["value_actual"])
@@ -154,7 +188,8 @@ def finalize_blocked(out: Path) -> None:
 
 
 def main() -> None:
-    p = argparse.ArgumentParser(description=__doc__); p.add_argument("--stage", choices=("audit", "plan", "smoke", "preflight", "prepare"), default="prepare"); p.add_argument("--output", type=Path, default=ROOT); a = p.parse_args()
+    p = argparse.ArgumentParser(description=__doc__); p.add_argument("--stage", choices=("prepare-inputs", "audit", "plan", "smoke", "preflight", "prepare"), default="prepare"); p.add_argument("--output", type=Path, default=ROOT); p.add_argument("--bundle", type=Path, default=Path("data/colab_bridge/lot46_inputs.tar.gz")); a = p.parse_args()
+    if a.stage == "prepare-inputs": prepare_inputs(a.bundle); return
     if a.stage in ("audit", "prepare"): allowed = audit(a.output)
     if a.stage in ("plan", "prepare"): plan(a.output)
     if a.stage == "smoke": smoke(a.output)
