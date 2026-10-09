@@ -157,3 +157,14 @@ def test_prepare_stage_does_not_require_future_training_battery(tmp_path):
     report=validate_scientific_inputs(cfg,ROOT,stage="prepare-a")
     assert report["SCIENTIFIC_INPUTS_READY"]=="YES"
     assert all(x["name"]!="strategic_preservation_battery" for x in report["dependencies"])
+
+
+def test_cuda_main_training_is_valid_smoke_evidence():
+    from run_srn_lot46 import cuda_training_evidence
+    status={"status":"COMPLETED","experiment_id":"X","device":"cuda","checkpoint_durable":True,
+            "global_step":40,"code_commit":"abc","validation":{"no_grad_parameter_invariance":True}}
+    latest=(Path("checkpoint.pt"),{"status":"COMMITTED","step":40})
+    passed,evidence=cuda_training_evidence(status,latest,None)
+    assert passed and evidence["source"]=="main_training_status" and evidence["global_step"]==40
+    status["device"]="cpu"
+    assert cuda_training_evidence(status,latest,None)[0] is False

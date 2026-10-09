@@ -341,6 +341,20 @@ def export_a(config_path: Path, bundle: Path) -> dict:
     return {"EXPORT":"PASS","path":str(bundle),"sha256":digest,"size":bundle.stat().st_size}
 
 
+def cuda_training_evidence(status: dict | None, latest: tuple[Path,dict] | None,
+                           legacy_smoke: dict | None) -> tuple[bool,dict | None]:
+    legacy_pass=bool(legacy_smoke and legacy_smoke.get("status")=="PASS" and legacy_smoke.get("cuda_training_smoke"))
+    run_pass=bool(status and status.get("status") in {"COMPLETED","RESUMABLE"} and status.get("device")=="cuda"
+                  and status.get("checkpoint_durable") is True and latest
+                  and status.get("validation",{}).get("no_grad_parameter_invariance") is True)
+    if run_pass:
+        return True,{"source":"main_training_status","experiment_id":status.get("experiment_id"),
+                     "code_commit":status.get("code_commit"),"global_step":status.get("global_step"),
+                     "device":status.get("device"),"checkpoint_manifest":latest[1],
+                     "validation_no_grad_parameter_invariance":True}
+    return legacy_pass,legacy_smoke
+
+
 def finalize_a(config_path: Path) -> dict:
     cfg=ExperimentConfig.load(config_path);ctx=prepare_context(cfg,REPOSITORY_ROOT);out=ctx["output"]
     def read(name): return json.loads((out/name).read_text()) if (out/name).is_file() else None
@@ -351,8 +365,8 @@ def finalize_a(config_path: Path) -> dict:
     atomic_json(out/"lot46a_checkpoint_integrity.json",integrity)
     drive_base=out.parents[1]/"lot46_g5_training" if len(out.parents)>1 else ROOT
     base_smoke=read("smoke_test_report.json") or (json.loads((drive_base/"smoke_test_report.json").read_text()) if (drive_base/"smoke_test_report.json").is_file() else None)
-    cuda_pass=bool(base_smoke and base_smoke.get("status")=="PASS" and base_smoke.get("cuda_training_smoke"))
-    cuda={"status":"PASS" if cuda_pass else "NOT_TESTED","evidence":base_smoke,"required":"forward/backward/optimizer/checkpoint on CUDA"}
+    cuda_pass,cuda_evidence=cuda_training_evidence(status,latest,base_smoke)
+    cuda={"status":"PASS" if cuda_pass else "NOT_TESTED","evidence":cuda_evidence,"required":"forward/backward/optimizer/checkpoint on CUDA"}
     atomic_json(out/"lot46a_cuda_smoke.json",cuda)
     g4_rows=[]
     for arm,item in candidates().items():
@@ -399,7 +413,7 @@ def main() -> None:
                     "error_type":type(exc).__name__,"error_message":str(exc),"traceback":traceback.format_exc(),"timestamp":time.time()})
                 raise
         elif a.stage=="validate":
-            cfg=ExperimentConfig.load(a.config);ctx=prepare_context(cfg,REPOSITORY_ROOT);device=torch.device("cuda" if cfg.device=="cuda" and torch.cuda.is_available() else "cpu");model,fp=load_initial_model(cfg,REPOSITORY_ROOT,device);configure_trainable(model,cfg.candidate_family,cfg.training_mode);opt,sch=make_optimizer_scheduler(model,cfg);sampler=WeightedStatefulSampler(ctx["splits"]["train"],{s.target_source:s.weight for s in cfg.dataset_sources},cfg.seed,cfg.batch_size);store=DurableCheckpointStore(ctx["output"]/"local_checkpoints",ctx["output"]/"durable_checkpoints");latest=store.latest(cfg.experiment_id)
+            cfg=ExperimentConfig.load(a.config);ctx=prepare_context(cfg,REPOSITORY_ROOT);device=torch.device("cuda" if cfg.device in {"cuda","auto"} and torch.cuda.is_available() else "cpu");model,fp=load_initial_model(cfg,REPOSITORY_ROOT,device);configure_trainable(model,cfg.candidate_family,cfg.training_mode);opt,sch=make_optimizer_scheduler(model,cfg);sampler=WeightedStatefulSampler(ctx["splits"]["train"],{s.target_source:s.weight for s in cfg.dataset_sources},cfg.seed,cfg.batch_size);store=DurableCheckpointStore(ctx["output"]/"local_checkpoints",ctx["output"]/"durable_checkpoints");latest=store.latest(cfg.experiment_id)
             if not latest:raise Lot46Error("no checkpoint to validate")
             resume_into(latest[0],config=cfg,model=model,optimizer=opt,scheduler=sch,sampler=sampler,dataset_fingerprint=ctx["dataset_fingerprint"],split_fingerprint=ctx["split_fingerprint"],initial_fingerprint=fp,code_commit=git_commit());result=evaluate(model,ctx["splits"]["validation"],device);atomic_json(ctx["output"]/"validation.json",result)
         elif a.stage=="inspect-checkpoint": result=inspect_checkpoint_a(a.config)
