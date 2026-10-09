@@ -16,6 +16,8 @@ perf = ["numba>=0.60"]
 train = ["torch>=2.3"]
 table = ["pygame>=2.5"]
 export = ["onnx>=1.16", "onnxscript>=0.1", "onnxruntime>=1.18"]
+# Coordinateur transactionnel du runner distribue Lot45 (lot45/distributed).
+distributed = ["google-cloud-firestore>=2.16"]
 
 [tool.pytest.ini_options]
 testpaths = ["packages/songo_ai/tests", "apps/table/src"]

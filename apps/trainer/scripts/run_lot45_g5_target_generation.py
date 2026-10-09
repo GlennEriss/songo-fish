@@ -11,8 +11,15 @@ Stages :
   plan            affiche compute_plan et l'avancement
   generate        calcul MCTS32768 sous verrou mono-ecrivain (exige --confirm ; reprenable)
   status          avancement, verrou, heartbeat
-  finalize        validation, dataset, audits, decision
+  finalize        validation, dataset, audits, decision (mode distribue si migre)
   export          lot45_results.tar.gz verifie
+
+Execution distribuee multi-Colab (coordinateur transactionnel Firestore) :
+  dist-audit      classe les shards existants (lecture seule)
+  dist-preflight  preflight du worker contre le vrai coordinateur (run jetable)
+  migrate         import exclusif et idempotent des shards dans le coordinateur
+  worker          boucle reserver/calculer/valider/publier (exige --confirm)
+  dist-status     avancement selon le coordinateur
 
 Aucun entrainement (optimizer/backward/checkpoint G5 = NONE), aucun label
 Minimax/teacher historique, aucun routeur, aucune position a 65536.
@@ -36,7 +43,8 @@ from lot44.artifacts import ErrorLog, Lot44FatalError, append_execution, read_js
 from lot44.paths import resolve_drive_root  # noqa: E402
 from lot45.config import DEFAULT_CONCURRENCY, DEFAULT_SEED, EXPERIMENT_DIR_NAME, PILOT_SHARDS, PROBE_POSITIONS_FILE, SELECTION_FILE  # noqa: E402
 
-STAGES = ("prepare-inputs", "selftest", "preflight", "smoke", "prepare", "pilot", "plan", "generate", "status", "finalize", "export")
+STAGES = ("prepare-inputs", "selftest", "preflight", "smoke", "prepare", "pilot", "plan", "generate", "status", "finalize", "export", "dist-audit", "dist-preflight", "migrate", "worker", "dist-status")
+WORKER_STAGES = ("dist-preflight", "worker")
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -52,13 +60,16 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--target-positions", type=int, help="prepare: number of positions to reanalyze (prefix of the ordered selection)")
     p.add_argument("--seed", type=int, default=DEFAULT_SEED)
     p.add_argument("--device", choices=("auto", "cpu", "cuda"), default="auto")
-    p.add_argument("--concurrency", type=int, default=DEFAULT_CONCURRENCY)
+    p.add_argument("--concurrency", type=int, help=f"MCTS trees in parallel (default {DEFAULT_CONCURRENCY}; worker: sized from the RAM)")
     p.add_argument("--max-shards", type=int, help="generate: stop after N newly computed shards")
     p.add_argument("--pilot-shards", type=int, default=PILOT_SHARDS)
     p.add_argument("--confirm", action="store_true", help="generate: non-interactive confirmation for the long compute")
     p.add_argument("--takeover-stale-lock", action="store_true", help="take over a lock whose heartbeat expired (logged in run_lock_history.json)")
     p.add_argument("--skip-inputs", action="store_true", help="preflight: do not require Lot45 selection/Lot44 inputs (engineering check)")
     p.add_argument("--sync-to-drive", action="store_true", help="prepare-inputs: copy the input bundle to <drive>/songo-ai/inputs")
+    p.add_argument("--coordinator-config", help="distributed: JSON (or path to JSON) {project, database, namespace, credentials}")
+    p.add_argument("--worker-id", help="distributed: unique id of this worker session (default: generated)")
+    p.add_argument("--report", type=Path, help="dist-audit: write the audit JSON to this path")
     return p
 
 
@@ -70,7 +81,7 @@ def make_context(a: argparse.Namespace):
     out = (a.output or experiments / EXPERIMENT_DIR_NAME).expanduser().resolve()
     lot44 = (a.lot44 or experiments / "lot44_router_out_of_sample_validation").expanduser()
     exports = (a.exports or (root / "songo-ai/exports" if root else REPO / "data/exports")).expanduser()
-    ctx = Context(out=out, seed=a.seed, device_name=a.device, selection_file=a.selection.resolve(), original_positions=a.probe_positions.resolve(), lot44=lot44 if lot44.is_dir() else None, concurrency=a.concurrency, target_positions=a.target_positions, max_shards=a.max_shards, takeover_stale_lock=a.takeover_stale_lock)
+    ctx = Context(out=out, seed=a.seed, device_name=a.device, selection_file=a.selection.resolve(), original_positions=a.probe_positions.resolve(), lot44=lot44 if lot44.is_dir() else None, concurrency=a.concurrency or DEFAULT_CONCURRENCY, target_positions=a.target_positions, max_shards=a.max_shards, takeover_stale_lock=a.takeover_stale_lock)
     return ctx, {"drive_root": str(root) if root else None, "drive_method": method, "output": str(out), "lot44": str(lot44), "exports": str(exports)}, exports
 
 
@@ -83,6 +94,38 @@ def require_gates(ctx, *, pilot_needed: bool) -> None:
     if read_json(preflight).get("code_commit") != git_commit():
         raise Lot44FatalError("PREFLIGHT_STALE", "code changed since preflight; rerun --stage preflight")
     for name, key in (("smoke_test_report.json", "SMOKE_TEST"),) + ((("pilot_report.json", "PILOT"),) if pilot_needed else ()):
+        path = ctx.out / name
+        if not path.is_file() or read_json(path).get(key) != "PASS":
+            raise Lot44FatalError("GATE_FAILED", f"requires {name} with {key} = PASS")
+
+
+def coordinator_config(a: argparse.Namespace):
+    from lot45.distributed.config import parse_coordinator_config
+
+    return parse_coordinator_config(a.coordinator_config)
+
+
+def coordinator(a: argparse.Namespace, ctx):
+    from lot45.distributed.coordinator import ShardCoordinator, make_client
+    from lot45.distributed.migration import run_key
+
+    config = coordinator_config(a)
+    return ShardCoordinator(make_client(config), config, run_key(read_json(ctx.out / "shard_manifest.json")))
+
+
+def require_worker_gates(ctx, worker_id: str) -> None:
+    """Un worker ne calcule qu'apres SON preflight distribue PASS, au commit courant."""
+
+    from run_srn_colab_benchmark import git_commit
+
+    from lot45.distributed.worker import worker_dir
+
+    report = worker_dir(ctx.out, worker_id) / "preflight_report.json"
+    if not report.is_file() or read_json(report).get("PREFLIGHT_STATUS") != "PASS":
+        raise Lot44FatalError("PREFLIGHT_FAILED", f"worker {worker_id}: requires its dist-preflight report with PREFLIGHT_STATUS = PASS ({report})")
+    if read_json(report).get("code_commit") != git_commit():
+        raise Lot44FatalError("PREFLIGHT_STALE", "code changed since this worker's preflight; rerun --stage dist-preflight")
+    for name, key in (("smoke_test_report.json", "SMOKE_TEST"), ("pilot_report.json", "PILOT")):
         path = ctx.out / name
         if not path.is_file() or read_json(path).get(key) != "PASS":
             raise Lot44FatalError("GATE_FAILED", f"requires {name} with {key} = PASS")
@@ -109,7 +152,12 @@ def dispatch(a: argparse.Namespace, ctx, paths: dict, exports: Path) -> dict:
     if a.stage == "selftest":
         from lot44.selftest import run_selftest
 
-        report = run_selftest(ctx.out, ("packages/songo_ai/tests/lot44", "packages/songo_ai/tests/lot45"))
+        target = ctx.out
+        if a.worker_id is not None:
+            from lot45.distributed.worker import worker_dir
+
+            target = worker_dir(ctx.out, a.worker_id)
+        report = run_selftest(target, ("packages/songo_ai/tests/lot44", "packages/songo_ai/tests/lot45"))
         if report["failed"]:
             raise Lot44FatalError("TESTS_FAILED", f"{report['failed']} tests failed; see test_report.json")
         return {k: report[k] for k in ("command", "return_code", "total", "passed", "failed", "skipped")}
@@ -148,9 +196,52 @@ def dispatch(a: argparse.Namespace, ctx, paths: dict, exports: Path) -> dict:
         return generate(ctx, owner="generate", max_shards=a.max_shards)
     if a.stage == "status":
         return overview(ctx)
+    if a.stage == "dist-audit":
+        from lot45.distributed.migration import audit
+
+        report = audit(ctx)
+        if a.report:
+            from lot44.artifacts import write_json
+
+            write_json(a.report, report)
+        return {k: report[k] for k in ("legacy_writer_live", "counts", "total")} | {"by_status": {s: [r["shard_id"] for r in report["shards"] if r["status"] == s] for s in report["counts"] if s != "COMPLETED_VALID"}}
+    if a.stage == "dist-preflight":
+        from lot45.distributed.preflight import DistributedPreflight
+
+        report = DistributedPreflight(ctx, coordinator_config(a), a.worker_id).run()
+        if report["PREFLIGHT_STATUS"] != "PASS":
+            raise Lot44FatalError("PREFLIGHT_FAILED", f"critical failures: {report['critical_failures']}")
+        return {k: report[k] for k in ("PREFLIGHT_STATUS", "SCIENTIFIC_RUN_ALLOWED", "worker_id", "device", "summary")}
+    if a.stage == "migrate":
+        from lot45.distributed.migration import migrate
+
+        return migrate(ctx, coordinator(a, ctx), holder=a.worker_id, takeover_stale_legacy_lock=a.takeover_stale_lock)
+    if a.stage == "worker":
+        from lot45.distributed.worker import WorkerSettings, resolve_concurrency, run_worker
+
+        require_worker_gates(ctx, a.worker_id)
+        coord = coordinator(a, ctx)
+        if not a.confirm:
+            return {"status": "CONFIRMATION_REQUIRED", "progress": coord.progress(), "hint": "re-run with --confirm to start this worker"}
+        settings = WorkerSettings(worker_id=a.worker_id, concurrency=resolve_concurrency(ctx, a.concurrency), max_shards=a.max_shards)
+        print(f"[Lot45][worker] {a.worker_id} concurrency={settings.concurrency} device={ctx.device_name}", flush=True)
+        return run_worker(ctx, coord, settings)
+    if a.stage == "dist-status":
+        coord = coordinator(a, ctx)
+        records = coord.shard_records()
+        statuses = {}
+        for r in records:
+            statuses.setdefault(r["status"], []).append(r["shard_id"])
+        running = [{"shard": r["shard_id"], "worker": r["worker_id"], "token": r["fencing_token"], "attempt": r["attempt_number"], "expires_in_s": round(r["lease_expires_at"] - time.time())} for r in records if r["status"] == "RUNNING"]
+        return {"run_key": coord.run_key, "progress": coord.progress(), "counts": {k: len(v) for k, v in statuses.items()}, "running": running, "failed": {k: v for k, v in statuses.items() if k.startswith("FAILED")}}
     if a.stage == "finalize":
+        from lot45.config import DISTRIBUTED_MARKER
         from lot45.finalize import finalize
 
+        if (ctx.out / DISTRIBUTED_MARKER).is_file():
+            from lot45.distributed.finalizer import finalize_distributed
+
+            return finalize_distributed(ctx, coordinator(a, ctx), holder=a.worker_id)
         return finalize(ctx)
     if a.stage == "export":
         from lot45.finalize import export
@@ -164,16 +255,27 @@ def main(argv: list[str] | None = None) -> int:
     os.chdir(REPO)
     ctx, paths, exports = make_context(a)
     ctx.out.mkdir(parents=True, exist_ok=True)
+    if a.worker_id is None and a.stage in WORKER_STAGES + ("migrate", "finalize"):
+        from lot45.distributed.worker import default_worker_id
+
+        a.worker_id = default_worker_id()
+    # Un worker n'ecrit jamais les journaux partages : les siens vont dans distributed/workers/{id}/.
+    log_dir = ctx.out
+    if a.worker_id is not None and a.stage in WORKER_STAGES + ("selftest",):
+        from lot45.distributed.worker import worker_dir
+
+        log_dir = worker_dir(ctx.out, a.worker_id)
+        log_dir.mkdir(parents=True, exist_ok=True)
     started = time.time()
     entry = {"stage": a.stage, "argv": sys.argv[1:] if argv is None else argv, "started_utc": utc_now(), "paths": paths}
     print(f"[Lot45] stage={a.stage} output={ctx.out} drive={paths['drive_method']}", flush=True)
     try:
         result = dispatch(a, ctx, paths, exports)
     except BaseException as exc:
-        ErrorLog(ctx.out / "errors.jsonl").record(stage=a.stage, exc=exc)
-        append_execution(ctx.out, {**entry, "status": "FAILED", "error": f"{type(exc).__name__}: {exc}", "seconds": time.time() - started})
+        ErrorLog(log_dir / "errors.jsonl").record(stage=a.stage, exc=exc)
+        append_execution(log_dir, {**entry, "status": "FAILED", "error": f"{type(exc).__name__}: {exc}", "seconds": time.time() - started})
         raise
-    append_execution(ctx.out, {**entry, "status": "OK", "seconds": time.time() - started})
+    append_execution(log_dir, {**entry, "status": "OK", "seconds": time.time() - started})
     print(json.dumps(result, indent=2, default=str), flush=True)
     return 0
 

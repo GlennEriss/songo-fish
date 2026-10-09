@@ -53,3 +53,6 @@ FORBIDDEN_TARGET_FIELDS = (
 LOCK_HEARTBEAT_S = 60.0
 LOCK_STALE_AFTER_S = 900.0
 LOCK_SETTLE_S = 20.0
+
+# Ecrit par la migration distribuee : le runner mono-ecrivain refuse ensuite d'ecrire.
+DISTRIBUTED_MARKER = "distributed/run.json"

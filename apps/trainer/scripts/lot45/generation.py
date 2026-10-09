@@ -18,7 +18,7 @@ from lot44.artifacts import ErrorLog, Lot44FatalError, canonical_hash, checked_s
 from lot44.pipeline import choose_device
 from lot44.search import SearchIdentity, estimated_peak_bytes, load_completed, run_search, shard_dir
 
-from .config import BUDGET, CANDIDATE_TIERS, LOCK_SETTLE_S, SHARD_SIZE
+from .config import BUDGET, CANDIDATE_TIERS, DISTRIBUTED_MARKER, LOCK_SETTLE_S, SHARD_SIZE
 from .run_lock import RunLock, machine_identity
 from .dataset import validate_row
 from .selection import read_selection
@@ -126,7 +126,15 @@ def compute_plan(ctx: Context, available: int) -> dict:
     }
 
 
+def refuse_if_distributed(ctx: Context, stage: str) -> None:
+    """Apres migration, seul le coordinateur distribue attribue les shards."""
+
+    if (ctx.out / DISTRIBUTED_MARKER).is_file():
+        raise Lot44FatalError("MIGRATED_TO_DISTRIBUTED", f"{ctx.out.name} is coordinated by the distributed runner ({DISTRIBUTED_MARKER}); the single-writer '{stage}' stage is disabled — use --stage worker")
+
+
 def prepare(ctx: Context) -> dict:
+    refuse_if_distributed(ctx, "prepare")
     ctx.out.mkdir(parents=True, exist_ok=True)
     (ctx.out / "errors.jsonl").touch()
     if not ctx.smoke:
@@ -173,6 +181,7 @@ def generate(ctx: Context, *, owner: str, max_shards: int | None = None, first_s
     decoupee) ; ``first_shards_only`` restreint le parcours aux N premiers.
     """
 
+    refuse_if_distributed(ctx, "generate")
     manifest = read_json(ctx.out / "shard_manifest.json")
     if manifest["search_identity_fingerprint"] != ctx.identity().fingerprint():
         raise Lot44FatalError("MCTS_CONFIG_INCOMPATIBLE", "search identity differs from shard_manifest.json")

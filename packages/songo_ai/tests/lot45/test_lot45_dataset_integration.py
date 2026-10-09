@@ -23,7 +23,8 @@ from run_lot45_g5_target_generation import STAGES, build_parser
 from lot45_test_support import PROBE, make_context, require_inputs
 
 NOTEBOOK = REPO_ROOT / "notebooks/lot45_g5_target_generation.ipynb"
-LOT45_SOURCES = sorted((REPO_ROOT / "apps/trainer/scripts/lot45").glob("*.py")) + [REPO_ROOT / "apps/trainer/scripts/run_lot45_g5_target_generation.py"]
+LOT45_SOURCES = sorted((REPO_ROOT / "apps/trainer/scripts/lot45").rglob("*.py")) + [REPO_ROOT / "apps/trainer/scripts/run_lot45_g5_target_generation.py"]
+DISTRIBUTED_NOTEBOOK = REPO_ROOT / "notebooks/lot45_distributed_worker.ipynb"
 
 
 def selection(tmp_path, n=16):
@@ -204,16 +205,39 @@ def test_minimax_audit_and_source_guards():
         assert not re.search(r"except[^\n]*:\s*\n\s*pass\b", text), path.name
 
 
+def assert_notebook(path, steps):
+    nb = json.loads(path.read_text(encoding="utf-8"))
+    assert nb["nbformat"] == 4
+    cells = [("".join(c["source"]), c["cell_type"]) for c in nb["cells"]]
+    titles = [s.splitlines()[0] for s, k in cells if k == "markdown" and s.startswith("## STEP")]
+    assert titles == [f"## STEP {i} — {n}" for i, n in enumerate(steps, 1)]
+    return [s for s, k in cells if k == "code"]
+
+
+def test_distributed_notebook_asks_only_the_required_parameters():
+    code = assert_notebook(DISTRIBUTED_NOTEBOOK, ["Mount Drive", "Locate project", "Environment", "Preflight", "Migrate (idempotent)", "Worker", "Finalize", "Export"])
+    config = ast.parse(code[0])
+    assigned = [t.id for n in config.body if isinstance(n, ast.Assign) for t in n.targets]
+    assert assigned == ["WORKER_ID", "COORDINATOR_CONFIG", "DRIVE_ROOT", "PROJECT_ROOT", "DEVICE"]
+    joined = "\n".join(code)
+    assert "shard_0" not in joined and "--takeover-stale-lock" not in joined
+    for stage in ("dist-preflight", "migrate", "worker", "dist-status", "finalize", "export"):
+        assert f"'{stage}'" in joined
+    assert_cells_defined(code)
+
+
 def test_cli_and_notebook_are_consistent():
     parser = build_parser()
     for stage in STAGES:
         parser.parse_args(["--stage", stage])
-    nb = json.loads(NOTEBOOK.read_text(encoding="utf-8"))
-    assert nb["nbformat"] == 4
-    cells = [("".join(c["source"]), c["cell_type"]) for c in nb["cells"]]
-    titles = [s.splitlines()[0] for s, k in cells if k == "markdown" and s.startswith("## STEP")]
-    assert titles == [f"## STEP {i} — {n}" for i, n in enumerate(["Mount Drive", "Locate project", "Environment", "Preflight", "Smoke test", "Prepare", "Pilot", "Generate / Resume", "Finalize", "Export"], 1)]
-    code = [s for s, k in cells if k == "code"]
+    code = assert_notebook(NOTEBOOK, ["Mount Drive", "Locate project", "Environment", "Preflight", "Smoke test", "Prepare", "Pilot", "Generate / Resume", "Finalize", "Export"])
+    assert_cells_defined(code)
+    stages = set(re.findall(r"lot45\('([a-z-]+)'", "\n".join(code)))
+    assert {"selftest", "preflight", "smoke", "prepare", "pilot", "generate", "finalize", "export"} <= stages
+    assert "CONFIRM_LONG_COMPUTE = False" in code[0]
+
+
+def assert_cells_defined(code):
     defined = set(dir(builtins))
     for index, source in enumerate(code):
         tree = ast.parse(source)
@@ -229,9 +253,8 @@ def test_cli_and_notebook_are_consistent():
         assert not undefined, f"code cell {index}: {undefined}"
         defined |= local
     joined = "\n".join(code)
-    stages = set(re.findall(r"lot45\('([a-z-]+)'", joined))
-    assert stages <= set(STAGES) and {"selftest", "preflight", "smoke", "prepare", "pilot", "generate", "finalize", "export"} <= stages
+    assert set(re.findall(r"lot45\('([a-z-]+)'", joined)) <= set(STAGES)
     flags = set(re.findall(r"'(--[a-z-]+)'", joined)) - {"--branch", "--ff-only"}
-    parser_flags = {o for a in parser._actions for o in a.option_strings}
+    parser_flags = {o for a in build_parser()._actions for o in a.option_strings}
     assert flags <= parser_flags, flags - parser_flags
-    assert "PREFLIGHT FAIL" in joined and "CONFIRM_LONG_COMPUTE = False" in code[0]
+    assert "PREFLIGHT FAIL" in joined
