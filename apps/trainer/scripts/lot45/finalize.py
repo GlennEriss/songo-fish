@@ -11,6 +11,7 @@ from lot44.search import load_completed, shard_dir
 from . import dataset as dataset_module, generation, selection as selection_module, sources as sources_module
 from .config import BUNDLE_NAME, DATASET_NAME, DATASET_SCHEMA_VERSION, EXPERIMENT_DIR_NAME, FORBIDDEN_TARGET_FIELDS, TEACHER_MODEL
 from .dataset import dataset_row, old_vs_deep, read_dataset, target_audit, target_statistics, validate_row, write_dataset
+from .distributed.storage import load_referenced
 from .generation import Context, shard_records
 
 TECHNICAL = ("preflight_report.json", "test_report.json", "smoke_test_report.json", "pilot_report.json", "run_lock_history.json", "errors.jsonl")
@@ -30,7 +31,10 @@ def minimax_audit() -> dict:
     return {"forbidden_imports": imports, "MINIMAX_LABELS_USED": "NO" if not any(imports.values()) else "YES"}
 
 
-def collect(ctx: Context) -> tuple[list[dict], list[dict], list[dict], dict]:
+def collect(ctx: Context, artifacts: dict[str, list[dict]] | None = None) -> tuple[list[dict], list[dict], list[dict], dict]:
+    """``artifacts`` (mode distribue) : par shard, la liste des fichiers references
+    par l'enregistrement COMPLETED du coordinateur ; seuls ces fichiers sont lus."""
+
     manifest = read_json(ctx.out / "shard_manifest.json")
     identity_fp = ctx.identity().fingerprint()
     if manifest["search_identity_fingerprint"] != identity_fp:
@@ -41,11 +45,16 @@ def collect(ctx: Context) -> tuple[list[dict], list[dict], list[dict], dict]:
     for shard in manifest["shards"]:
         records = shard_records(ctx, shard)
         expected = {r["fingerprint"] for r in records}
-        directory = shard_dir(ctx.out, shard["shard"], ctx.budget)
-        done, files = load_completed(directory, identity_fp, expected, remove_incomplete=False)
-        status = {**shard, "complete": len(done) == len(expected), "completed_positions": len(done), "files": files, "devices": []}
-        for name in files:
-            payload = read_json(directory / name)
+        if artifacts is None:
+            directory = shard_dir(ctx.out, shard["shard"], ctx.budget)
+            done, files = load_completed(directory, identity_fp, expected, remove_incomplete=False)
+            paths = [directory / name for name in files]
+        else:
+            done, paths = load_referenced(ctx.out, artifacts.get(shard["shard"], []), identity_fp, expected, partition=shard["shard"])
+        status = {**shard, "complete": len(done) == len(expected), "completed_positions": len(done), "files": [str(p.relative_to(ctx.out)) for p in paths], "devices": []}
+        for path in paths:
+            name = path.name
+            payload = read_json(path)
             status["devices"].append(payload["device"])
             status.setdefault("wall_time_s", 0.0)
             status["wall_time_s"] += payload["wall_time_s"]
@@ -60,7 +69,7 @@ def collect(ctx: Context) -> tuple[list[dict], list[dict], list[dict], dict]:
     return rows, invalid, statuses, manifest
 
 
-def finalize(ctx: Context) -> dict:
+def finalize(ctx: Context, artifacts: dict[str, list[dict]] | None = None) -> dict:
     required = INPUT_REPORTS + (() if ctx.smoke else TECHNICAL + ("lot44_input_validation.json",))
     missing = [n for n in required if not (ctx.out / n).is_file()]
     if missing:
@@ -71,7 +80,7 @@ def finalize(ctx: Context) -> dict:
                 raise Lot44FatalError("GATE_FAILED", f"{name}: {key} != {value}")
         if read_json(ctx.out / "test_report.json").get("failed", 1) != 0:
             raise Lot44FatalError("TESTS_FAILED", "test_report.json reports failures")
-    rows, invalid, statuses, manifest = collect(ctx)
+    rows, invalid, statuses, manifest = collect(ctx, artifacts)
     incomplete = [s["shard"] for s in statuses if not s["complete"]]
     write_jsonl(ctx.out / "invalid_positions.jsonl", invalid)
     errors = read_jsonl(ctx.out / "errors.jsonl") if (ctx.out / "errors.jsonl").stat().st_size else []
