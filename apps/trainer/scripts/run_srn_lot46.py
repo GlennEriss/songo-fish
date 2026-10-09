@@ -14,13 +14,14 @@ from pathlib import Path
 import torch
 
 from songo_ai.model import load_srn_checkpoint
-from songo_ai.training.lot46 import (Lot46Dataset, Lot46Error, atomic_torch_save,
+from songo_ai.training.lot46 import (Lot46Dataset, Lot46Error, atomic_torch_save, checkpoint_diagnostic,
                                      collate, group_aware_split, lot46_loss,
                                      rng_state, sha256)
 
-ROOT = Path("data/experiments/lot46_g5_training")
-LOT45 = Path("data/experiments/lot45_g5_target_generation")
-G4 = Path("data/experiments/lot35_generator_pool/g4_champion_identity.json")
+REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
+ROOT = REPOSITORY_ROOT / "data/experiments/lot46_g5_training"
+LOT45 = REPOSITORY_ROOT / "data/experiments/lot45_g5_target_generation"
+G4 = REPOSITORY_ROOT / "data/experiments/lot35_generator_pool/g4_champion_identity.json"
 DATASET = LOT45 / "dataset/g5_deep_autonomous_reanalysis_v1.jsonl.gz"
 LOT46_INPUT_FILES = (
     G4,
@@ -42,6 +43,11 @@ def candidates() -> dict:
     return json.loads(G4.read_text())["candidates"]
 
 
+def resolve_project_path(value: str | Path) -> Path:
+    path = Path(value)
+    return path if path.is_absolute() else REPOSITORY_ROOT / path
+
+
 def git_commit() -> str | None:
     p = subprocess.run(["git", "rev-parse", "HEAD"], capture_output=True, text=True)
     return p.stdout.strip() if p.returncode == 0 else None
@@ -53,19 +59,20 @@ def not_run(reason: str) -> dict:
 
 def prepare_inputs(bundle: Path) -> None:
     """Construit le petit bundle Colab Lot46, distinct des resultats Lot45."""
-    missing = [str(path) for path in LOT46_INPUT_FILES if not path.is_file()]
+    files = [resolve_project_path(path) for path in LOT46_INPUT_FILES]
+    missing = [str(path) for path in files if not path.is_file()]
     if missing:
         raise FileNotFoundError(f"Lot46 input files missing: {missing}")
-    manifest = {"lot": 46, "purpose": "G4R_FROZEN_BASELINES", "files": {str(p): sha256(p) for p in LOT46_INPUT_FILES}}
-    manifest_path = Path("lot46_input_manifest.json")
+    manifest = {"lot": 46, "purpose": "G4R_FROZEN_BASELINES", "files": {str(p.relative_to(REPOSITORY_ROOT)): sha256(p) for p in files}}
+    manifest_path = REPOSITORY_ROOT / "lot46_input_manifest.json"
     atomic_json(manifest_path, manifest)
     bundle.parent.mkdir(parents=True, exist_ok=True)
     temporary = bundle.with_name(f".{bundle.name}.tmp")
     try:
         with tarfile.open(temporary, "w:gz") as archive:
             archive.add(manifest_path, arcname=manifest_path.name)
-            for path in LOT46_INPUT_FILES:
-                archive.add(path, arcname=str(path))
+            for path in files:
+                archive.add(path, arcname=str(path.relative_to(REPOSITORY_ROOT)))
         temporary.replace(bundle)
     finally:
         if temporary.exists(): temporary.unlink()
@@ -89,7 +96,7 @@ def audit(out: Path) -> bool:
     ids = candidates()
     model_checks = {}
     for key, item in ids.items():
-        policy_path, value_path = Path(item["policy_checkpoint"]), Path(item["value_checkpoint"])
+        policy_path, value_path = resolve_project_path(item["policy_checkpoint"]), resolve_project_path(item["value_checkpoint"])
         model_checks[key] = {
             "policy_checkpoint": item["policy_checkpoint"], "value_checkpoint": item["value_checkpoint"],
             "policy_expected": item["policy_fingerprint"], "value_expected": item["value_fingerprint"],
@@ -165,12 +172,38 @@ def smoke(out: Path) -> bool:
 
 def preflight(out: Path) -> bool:
     gate = json.loads((out / "dataset_audit.json").read_text()) if (out / "dataset_audit.json").is_file() else {}
+    checkpoint_rows = []
+    for arm, item in candidates().items():
+        for role in ("policy", "value"):
+            checkpoint_rows.append(checkpoint_diagnostic(
+                name=f"{arm}_G4R_{role.upper()}", expected_path=item[f"{role}_checkpoint"],
+                expected_sha256=item[f"{role}_fingerprint"],
+                expected_architecture=item["architecture_fingerprint"], repository_root=REPOSITORY_ROOT))
+    checkpoint_ok = all(row["CHECKPOINT_STATUS"] == "PASS" for row in checkpoint_rows)
+    checkpoint_report = {
+        "CHECKPOINT_STATUS": "PASS" if checkpoint_ok else "FAIL",
+        "CHECKPOINT_NAME": [row["CHECKPOINT_NAME"] for row in checkpoint_rows],
+        "CHECKPOINT_EXPECTED_PATH": [row["CHECKPOINT_EXPECTED_PATH"] for row in checkpoint_rows],
+        "CHECKPOINT_RESOLVED_PATH": [row["CHECKPOINT_RESOLVED_PATH"] for row in checkpoint_rows],
+        "CHECKPOINT_EXISTS": all(row["CHECKPOINT_EXISTS"] for row in checkpoint_rows),
+        "CHECKPOINT_FILE_SIZE": {row["CHECKPOINT_NAME"]: row["CHECKPOINT_FILE_SIZE"] for row in checkpoint_rows},
+        "CHECKPOINT_SHA256_VALID": all(row["CHECKPOINT_SHA256_VALID"] for row in checkpoint_rows),
+        "CHECKPOINT_FORMAT_VALID": all(row["CHECKPOINT_FORMAT_VALID"] for row in checkpoint_rows),
+        "CHECKPOINT_ARCHITECTURE_VALID": all(row["CHECKPOINT_ARCHITECTURE_VALID"] for row in checkpoint_rows),
+        "CHECKPOINT_LOAD_VALID": all(row["CHECKPOINT_LOAD_VALID"] for row in checkpoint_rows),
+        "CHECKPOINT_FORWARD_VALID": all(row["CHECKPOINT_FORWARD_VALID"] for row in checkpoint_rows),
+        "CHECKPOINT_ERROR_TYPE": [row["CHECKPOINT_ERROR_TYPE"] for row in checkpoint_rows if row["CHECKPOINT_ERROR_TYPE"]],
+        "CHECKPOINT_ERROR_MESSAGE": [row["CHECKPOINT_ERROR_MESSAGE"] for row in checkpoint_rows if row["CHECKPOINT_ERROR_MESSAGE"]],
+        "CHECKPOINT_TRACEBACK": [row["CHECKPOINT_TRACEBACK"] for row in checkpoint_rows if row["CHECKPOINT_TRACEBACK"]],
+        "checkpoints": checkpoint_rows,
+    }
+    atomic_json(out / "checkpoint_preflight_report.json", checkpoint_report)
     checks = {"PROJECT_IMPORTS": True, "PYTHON_DEPENDENCIES": True, "CUDA": torch.cuda.is_available(),
-              "DATASET": gate.get("TRAINING_ALLOWED") == "YES", "CHECKPOINT": all(Path(v[k]).is_file() for v in candidates().values() for k in ("policy_checkpoint", "value_checkpoint")),
+              "DATASET": gate.get("TRAINING_ALLOWED") == "YES", "CHECKPOINT": checkpoint_ok,
               "OUTPUT_WRITE": out.is_dir() and out.stat() is not None}
     critical = all(checks[k] for k in ("PROJECT_IMPORTS", "PYTHON_DEPENDENCIES", "DATASET", "CHECKPOINT", "OUTPUT_WRITE"))
     payload = {"PREFLIGHT_STATUS": "PASS" if critical else "FAIL", "SCIENTIFIC_TRAINING_ALLOWED": "YES" if critical else "NO",
-               "checks": checks, "python": sys.version, "platform": platform.platform(), "torch": torch.__version__,
+               "checks": checks, **checkpoint_report, "python": sys.version, "platform": platform.platform(), "torch": torch.__version__,
                "cuda_version": torch.version.cuda, "gpu": torch.cuda.get_device_name(0) if torch.cuda.is_available() else None}
     atomic_json(out / "preflight_report.json", payload); return critical
 

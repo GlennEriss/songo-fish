@@ -12,6 +12,7 @@ import json
 import math
 import os
 import random
+import traceback
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable, Sequence
@@ -20,7 +21,7 @@ import torch
 import torch.nn.functional as F
 
 from songo_ai.dataset.selfplay_schema import RawSongoState
-from songo_ai.model import SongoGraphBuilder, mask_policy_logits
+from songo_ai.model import SongoGraphBuilder, load_srn_checkpoint, mask_policy_logits
 from songo_ai.model.correct_preserve import correction_loss, preservation_loss
 
 
@@ -34,6 +35,68 @@ def sha256(path: Path) -> str:
         for chunk in iter(lambda: stream.read(1024 * 1024), b""):
             h.update(chunk)
     return h.hexdigest()
+
+
+def checkpoint_diagnostic(*, name: str, expected_path: str | Path,
+                          expected_sha256: str, expected_architecture: str,
+                          repository_root: Path) -> dict:
+    """Valide un checkpoint historique verifie, jusqu'au vrai forward SRN."""
+    expected = Path(expected_path)
+    resolved = expected if expected.is_absolute() else repository_root / expected
+    resolved = resolved.resolve()
+    report = {
+        "CHECKPOINT_NAME": name,
+        "CHECKPOINT_EXPECTED_PATH": str(expected),
+        "CHECKPOINT_RESOLVED_PATH": str(resolved),
+        "CHECKPOINT_EXISTS": resolved.is_file(),
+        "CHECKPOINT_FILE_SIZE": resolved.stat().st_size if resolved.is_file() else None,
+        "CHECKPOINT_SHA256_VALID": False,
+        "CHECKPOINT_FORMAT_VALID": False,
+        "CHECKPOINT_ARCHITECTURE_VALID": False,
+        "CHECKPOINT_LOAD_VALID": False,
+        "CHECKPOINT_FORWARD_VALID": False,
+        "CHECKPOINT_STATUS": "FAIL",
+        "CHECKPOINT_ERROR_TYPE": None,
+        "CHECKPOINT_ERROR_MESSAGE": None,
+        "CHECKPOINT_TRACEBACK": None,
+    }
+    try:
+        if not resolved.is_file():
+            raise FileNotFoundError(f"checkpoint absent: {resolved}")
+        actual = sha256(resolved)
+        report["CHECKPOINT_ACTUAL_SHA256"] = actual
+        report["CHECKPOINT_EXPECTED_SHA256"] = expected_sha256
+        report["CHECKPOINT_SHA256_VALID"] = actual == expected_sha256
+        if not report["CHECKPOINT_SHA256_VALID"]:
+            raise Lot46Error(f"SHA256 mismatch: expected {expected_sha256}, got {actual}")
+        # weights_only=False est limite ici a un artefact interne dont le SHA256
+        # historique vient d'etre verifie; le loader contractuel du projet est utilise.
+        loaded = load_srn_checkpoint(resolved, device="cpu")
+        report["CHECKPOINT_FORMAT_VALID"] = True
+        config_payload = loaded.model.config.__dict__ if hasattr(loaded.model.config, "__dict__") else str(loaded.model.config)
+        architecture = hashlib.sha256(json.dumps(config_payload, sort_keys=True, default=str).encode()).hexdigest()
+        report["CHECKPOINT_ACTUAL_ARCHITECTURE"] = architecture
+        report["CHECKPOINT_EXPECTED_ARCHITECTURE"] = expected_architecture
+        report["CHECKPOINT_ARCHITECTURE_VALID"] = architecture == expected_architecture
+        if not report["CHECKPOINT_ARCHITECTURE_VALID"]:
+            raise Lot46Error(f"architecture mismatch: expected {expected_architecture}, got {architecture}")
+        report["CHECKPOINT_LOAD_VALID"] = True
+        loaded.model.eval()
+        state = RawSongoState((5,) * 14 + (0, 0), 1)
+        graph = SongoGraphBuilder().build(state)
+        with torch.inference_mode():
+            policy, value = loaded.model(graph)
+        if policy.shape != (1, 7) or value.shape != (1,):
+            raise Lot46Error(f"invalid forward shapes: policy={tuple(policy.shape)}, value={tuple(value.shape)}")
+        if not torch.isfinite(policy).all() or not torch.isfinite(value).all():
+            raise Lot46Error("checkpoint forward produced NaN/Inf")
+        report["CHECKPOINT_FORWARD_VALID"] = True
+        report["CHECKPOINT_STATUS"] = "PASS"
+    except Exception as exc:
+        report["CHECKPOINT_ERROR_TYPE"] = type(exc).__name__
+        report["CHECKPOINT_ERROR_MESSAGE"] = str(exc)
+        report["CHECKPOINT_TRACEBACK"] = traceback.format_exc()
+    return report
 
 
 def reconstruct_policy_target(visits: Sequence[int], legal_mask: Sequence[bool],
