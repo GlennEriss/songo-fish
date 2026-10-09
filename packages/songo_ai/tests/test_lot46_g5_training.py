@@ -10,12 +10,12 @@ from songo_ai.training.lot46 import (Lot46Error, atomic_torch_save,
 from songo_ai.training.lot46 import sha256
 
 ROOT = Path(__file__).resolve().parents[3]
-CHECKPOINT = ROOT / "data/experiments/lot34r_g4_retry/checkpoints/control/step-08000.pt"
+CHECKPOINT = ROOT / "data/experiments/lot34r_g4_retry/checkpoints/pool/step-06000.pt"
 IDENTITY = ROOT / "data/experiments/lot35_generator_pool/g4_champion_identity.json"
 
 
 def expected():
-    item = json.loads(IDENTITY.read_text())["candidates"]["CONTROL"]
+    item = json.loads(IDENTITY.read_text())["candidates"]["POOL"]
     return item["policy_fingerprint"], item["architecture_fingerprint"]
 
 
@@ -53,7 +53,7 @@ def test_checkpoint_atomic_round_trip(tmp_path: Path):
 
 def test_checkpoint_diagnostic_success_and_forward():
     digest, architecture = expected()
-    report = checkpoint_diagnostic(name="CONTROL_G4R_POLICY", expected_path=CHECKPOINT,
+    report = checkpoint_diagnostic(name="POOL_G4R_POLICY", expected_path=CHECKPOINT,
         expected_sha256=digest, expected_architecture=architecture, repository_root=ROOT)
     assert report["CHECKPOINT_STATUS"] == "PASS"
     assert report["CHECKPOINT_LOAD_VALID"] and report["CHECKPOINT_FORWARD_VALID"]
