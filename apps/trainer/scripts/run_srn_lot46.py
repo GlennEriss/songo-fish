@@ -280,11 +280,37 @@ def asdict_source(source):
     return {name:getattr(source,name) for name in source.__dataclass_fields__}
 
 
+def _reuse_completed_run(config: ExperimentConfig, output: Path, report: dict) -> dict | None:
+    """Return verified historical evidence without changing its pinned commit."""
+    assignment_path=output/"experiment_assignment.json";status_path=output/"status.json"
+    if not assignment_path.is_file() and not status_path.is_file(): return None
+    if not assignment_path.is_file() or not status_path.is_file():
+        raise Lot46Error(f"existing experiment is incomplete and will not be overwritten: {output}")
+    assignment=json.loads(assignment_path.read_text());status=json.loads(status_path.read_text())
+    store=DurableCheckpointStore(output/"local_checkpoints",output/"durable_checkpoints");latest=store.latest(config.experiment_id)
+    commit=assignment.get("code_commit")
+    checks={"report_pass":report.get("status")=="PASS","assignment_experiment":assignment.get("experiment_id")==config.experiment_id,
+        "assignment_output":assignment.get("output_directory")==str(output.resolve()),
+        "config_fingerprint":assignment.get("config_fingerprint")==canonical_hash(config.payload()),
+        "status_completed":status.get("status")=="COMPLETED" and status.get("global_step")==config.max_steps,
+        "status_identity":status.get("experiment_id")==config.experiment_id,
+        "commit_present":isinstance(commit,str) and len(commit)==40,
+        "commit_consistent":status.get("code_commit")==commit and bool(latest) and latest[1].get("code_commit")==commit,
+        "checkpoint_step":bool(latest) and latest[1].get("step")==config.max_steps}
+    if not all(checks.values()): raise Lot46Error(f"existing experiment evidence is incompatible and will not be overwritten: {checks}")
+    return {**report,"reused_existing":True,"historical_code_commit":commit,
+            "reuse_validation":checks,"current_code_commit":git_commit()}
+
+
 def micro_overfit_a(config_path: Path) -> dict:
     cfg=ExperimentConfig.load(config_path); ctx=prepare_context(cfg,REPOSITORY_ROOT)
     micro_id=f"{cfg.experiment_id}_MICRO"; micro_out=ctx["output"]/"micro_overfit"/micro_id
     micro=replace(cfg,experiment_id=micro_id,output_directory=str(micro_out),max_steps=min(40,max(20,cfg.max_steps)),
                   validation_interval=min(10,max(1,cfg.validation_interval)),checkpoint_interval=min(20,max(1,cfg.checkpoint_interval)),confirm_full_training=False)
+    report_path=ctx["output"]/"lot46a_micro_overfit.json"
+    if report_path.is_file():
+        reused=_reuse_completed_run(micro,micro_out,json.loads(report_path.read_text()))
+        if reused is not None:return reused
     result=run_training(micro,REPOSITORY_ROOT,train_limit=64)
     history=[json.loads(x) for x in (micro_out/"training_history.jsonl").read_text().splitlines() if x]
     first,last=history[0],history[-1]; policy_applicable=cfg.candidate_family!="VALUE_INDEPENDENT";policy_ok=not policy_applicable or last["loss_policy"]<first["loss_policy"]
@@ -296,7 +322,7 @@ def micro_overfit_a(config_path: Path) -> dict:
             "final_policy_loss":last["loss_policy"],"initial_value_loss":first["loss_value"],"final_value_loss":last["loss_value"],
             "policy_component_learned":policy_ok if policy_applicable else "NOT_APPLICABLE",
             "value_component_learned":value_ok if value_applicable else "NOT_APPLICABLE","result":result}
-    atomic_json(ctx["output"]/"lot46a_micro_overfit.json",report); return report
+    atomic_json(report_path,report); return report
 
 
 def resume_test_a(config_path: Path) -> dict:
@@ -306,6 +332,15 @@ def resume_test_a(config_path: Path) -> dict:
               validation_interval=total,checkpoint_interval=cut,device="cpu",confirm_full_training=False)
     b=replace(cfg,experiment_id=f"{cfg.experiment_id}_RESUME_B",output_directory=str(root/f"{cfg.experiment_id}_RESUME_B"),max_steps=total,
               validation_interval=total,checkpoint_interval=cut,device="cpu",confirm_full_training=False)
+    report_path=ctx["output"]/"lot46a_resume_test.json"
+    if report_path.is_file():
+        report=json.loads(report_path.read_text())
+        reused_a=_reuse_completed_run(a,Path(a.output_directory),report)
+        reused_b=_reuse_completed_run(b,Path(b.output_directory),report)
+        if reused_a is not None and reused_b is not None:
+            return {**report,"reused_existing":True,"historical_code_commits":{
+                "continuous":reused_a["historical_code_commit"],"interrupted_resumed":reused_b["historical_code_commit"]},
+                "current_code_commit":git_commit()}
     ra=run_training(a,REPOSITORY_ROOT); run_training(b,REPOSITORY_ROOT,stop_after=cut); rb=run_training(b,REPOSITORY_ROOT,resume=True)
     sa=DurableCheckpointStore(Path(a.output_directory)/"local_checkpoints",Path(a.output_directory)/"durable_checkpoints").latest(a.experiment_id)
     sb=DurableCheckpointStore(Path(b.output_directory)/"local_checkpoints",Path(b.output_directory)/"durable_checkpoints").latest(b.experiment_id)
@@ -317,7 +352,7 @@ def resume_test_a(config_path: Path) -> dict:
     report={"status":"PASS" if passed else "FAIL","continuous_steps":total,"interrupted_at":cut,"model_parameters_exact":params,
             "optimizer_state_exact":optimizer,"scheduler_state_exact":scheduler,"global_step_exact":pa["global_step"]==pb["global_step"],
             "run_a":ra,"run_b":rb,"cpu_deterministic":True}
-    atomic_json(ctx["output"]/"lot46a_resume_test.json",report); return report
+    atomic_json(report_path,report); return report
 
 
 def inspect_checkpoint_a(config_path: Path) -> dict:

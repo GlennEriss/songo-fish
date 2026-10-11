@@ -200,3 +200,24 @@ def test_final_checkpoint_audit_rejects_corrupt_checkpoint(tmp_path):
     path,manifest=latest;path.write_bytes(b"corrupt")
     audit=audit_final_checkpoint(cfg,status,assignment,(path,manifest))
     assert audit["status"]=="FAIL" and audit["error_type"]
+
+
+def test_completed_historical_run_is_reused_without_commit_reassignment(tmp_path,monkeypatch):
+    from run_srn_lot46 import _reuse_completed_run
+    cfg=config(tmp_path,"LOT46A_HISTORICAL_REUSE",1);run_training(cfg,ROOT)
+    output=Path(cfg.output_directory);assignment_before=(output/"experiment_assignment.json").read_bytes()
+    checkpoint_before=DurableCheckpointStore(output/"local_checkpoints",output/"durable_checkpoints").latest(cfg.experiment_id)[1]
+    monkeypatch.setattr("run_srn_lot46.git_commit",lambda:"f"*40)
+    reused=_reuse_completed_run(cfg,output,{"status":"PASS","evidence":"historical"})
+    assert reused["reused_existing"] is True and reused["historical_code_commit"]!=reused["current_code_commit"]
+    assert (output/"experiment_assignment.json").read_bytes()==assignment_before
+    assert DurableCheckpointStore(output/"local_checkpoints",output/"durable_checkpoints").latest(cfg.experiment_id)[1]==checkpoint_before
+
+
+def test_incompatible_historical_run_is_never_overwritten(tmp_path):
+    from run_srn_lot46 import _reuse_completed_run
+    cfg=config(tmp_path,"LOT46A_HISTORICAL_BAD",1);run_training(cfg,ROOT);output=Path(cfg.output_directory)
+    status=json.loads((output/"status.json").read_text());status["global_step"]=999;(output/"status.json").write_text(json.dumps(status))
+    before=(output/"experiment_assignment.json").read_bytes()
+    with pytest.raises(Lot46Error,match="will not be overwritten"):_reuse_completed_run(cfg,output,{"status":"PASS"})
+    assert (output/"experiment_assignment.json").read_bytes()==before
