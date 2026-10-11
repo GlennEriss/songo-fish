@@ -39,7 +39,7 @@ def test_four_pilot_configurations_are_frozen_comparable_and_isolated():
 
 def test_pilot_contract_rejects_main_training_cpu_wrong_seed_and_wrong_identity():
     config = ExperimentConfig.load(ROOT / "configs/lot46b/pilot_control.json")
-    with pytest.raises(Lot46Error, match="100..300"):
+    with pytest.raises(Lot46Error, match="exactly 100"):
         _assert_pilot_contract(replace(config, max_steps=301, confirm_full_training=True))
     with pytest.raises(Lot46Error, match="CUDA"):
         _assert_pilot_contract(replace(config, device="cpu"))

@@ -577,6 +577,7 @@ def run_training(config: ExperimentConfig, root: Path, *, resume: bool=False, st
             code_commit=code_commit)
         step=int(payload["global_step"]); resumed=True
     history=output/"training_history.jsonl"; started=time.perf_counter(); checkpoint_manifest=[]; limit=min(config.max_steps,stop_after or config.max_steps)
+    validation_seconds=0.0; checkpoint_write_seconds=0.0
     starting_step=step; sampled_fingerprints=set(); source_sample_counts={s.target_source:0 for s in config.dataset_sources}
     model.train(); before_other=[]
     fixed=ctx["splits"]["validation"][:min(32,len(ctx["splits"]["validation"]))]
@@ -594,11 +595,19 @@ def run_training(config: ExperimentConfig, root: Path, *, resume: bool=False, st
              **metrics,"batch_source_counts":batch_source_counts,"batch_fingerprints":[x["fingerprint"] for x in batch],
              "elapsed_seconds":time.perf_counter()-started}
         with history.open("a") as stream: stream.write(json.dumps(row,sort_keys=True)+"\n")
-        if step%config.validation_interval==0 or step==limit: _write_json(output/"validation_latest.json",evaluate(model,ctx["splits"]["validation"],device))
+        if step%config.validation_interval==0 or step==limit:
+            if device.type == "cuda": torch.cuda.synchronize(device)
+            validation_started=time.perf_counter()
+            _write_json(output/"validation_latest.json",evaluate(model,ctx["splits"]["validation"],device))
+            if device.type == "cuda": torch.cuda.synchronize(device)
+            validation_seconds+=time.perf_counter()-validation_started
         if step%config.checkpoint_interval==0 or step==limit:
+            if device.type == "cuda": torch.cuda.synchronize(device)
+            checkpoint_started=time.perf_counter()
             payload=checkpoint_payload(config=config,model=model,optimizer=optimizer,scheduler=scheduler,sampler=sampler,step=step,
                 dataset_fingerprint=ctx["dataset_fingerprint"],split_fingerprint=ctx["split_fingerprint"],initial_fingerprint=initial_fp,
                 root=root,metrics=row); checkpoint_manifest.append(store.publish(payload,step)); _write_json(output/"checkpoint_manifest.json",{"checkpoints":checkpoint_manifest})
+            checkpoint_write_seconds+=time.perf_counter()-checkpoint_started
     with torch.no_grad():
         b=collate(fixed,device); p1,v1=model(b["graph"])
     other_drift=float((v1.cpu()-before_other[1]).abs().max()) if config.candidate_family!="VALUE_INDEPENDENT" else float((p1.cpu()-before_other[0]).abs().max())
@@ -612,7 +621,9 @@ def run_training(config: ExperimentConfig, root: Path, *, resume: bool=False, st
         "validation":evaluate(model,ctx["splits"]["validation"],device),"checkpoint_durable":bool(store.latest(config.experiment_id)),
         "samples_seen_this_invocation":executed*config.batch_size,"unique_states_seen_this_invocation":len(sampled_fingerprints),
         "source_sample_counts_this_invocation":source_sample_counts,
-        "samples_per_second":executed*config.batch_size/max(elapsed,1e-9),"steps_per_second":executed/max(elapsed,1e-9)}
+        "samples_per_second":executed*config.batch_size/max(elapsed,1e-9),"steps_per_second":executed/max(elapsed,1e-9),
+        "total_wall_time_seconds":elapsed,"training_wall_time_seconds":max(0.0,elapsed-validation_seconds-checkpoint_write_seconds),
+        "validation_seconds":validation_seconds,"checkpoint_write_seconds":checkpoint_write_seconds}
     _write_json(status_path,result)
     latest=store.latest(config.experiment_id)
     _write_json(output/"candidate_registry.json",{"candidates":[{"candidate_id":config.experiment_id,"family":config.candidate_family,

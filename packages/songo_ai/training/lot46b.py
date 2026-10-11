@@ -9,8 +9,10 @@ import math
 import re
 import subprocess
 import tarfile
+import tempfile
 import time
 import traceback
+from dataclasses import replace
 from pathlib import Path
 
 import torch
@@ -225,8 +227,8 @@ def _assert_pilot_contract(config: ExperimentConfig) -> None:
     expected = PILOT_IDS.get(config.candidate_family)
     if config.experiment_id != expected:
         raise Lot46Error(f"pilot id mismatch: expected {expected}")
-    if config.max_steps < 100 or config.max_steps > 300:
-        raise Lot46Error("Lot46B-B1 pilot budget must stay within 100..300 steps")
+    if config.max_steps != 100:
+        raise Lot46Error("Lot46B-B1 pilot budget must be exactly 100 steps")
     if config.confirm_full_training:
         raise Lot46Error("Lot46B-B1 must not enable full training")
     if config.device != "cuda":
@@ -245,6 +247,13 @@ def pilot_prepare(config_path: Path, root: Path, lot46a_output: Path, export_bun
         diagnostic_path=diagnostic, current_code_commit=git_commit(root))
     dependency = validate_scientific_inputs(config, root, stage="train")
     ctx = prepare_context(config, root)
+    if not torch.cuda.is_available():
+        raise Lot46Error("CUDA is mandatory for Lot46B-B1 scientific pilots")
+    device = torch.device("cuda")
+    initial_model, initial_fingerprint = load_initial_model(config, root, device)
+    initial_parameter_sha = model_fingerprint(initial_model)
+    trainable_parameters = configure_trainable(initial_model, config.candidate_family, config.training_mode)
+    parameter_audit = {name: bool(parameter.requires_grad) for name, parameter in initial_model.named_parameters()}
     train = ctx["splits"]["train"]
     validation = ctx["splits"]["validation"]
     holdout = ctx["splits"]["strategic_holdout"]
@@ -270,6 +279,13 @@ def pilot_prepare(config_path: Path, root: Path, lot46a_output: Path, export_bun
         "dataset_fingerprint": ctx["dataset_fingerprint"], "split_fingerprint": ctx["split_fingerprint"],
         "dataset": ctx["dataset_audit"], "inventory": inventory, "physical_state_overlap": overlaps,
         "prerequisites": prerequisites, "dependencies": dependency, "code_commit": git_commit(root),
+        "initialization": {"checkpoint": config.initial_checkpoint,
+            "policy_checkpoint": config.policy_checkpoint, "policy_checkpoint_sha256": sha256(root / config.policy_checkpoint),
+            "value_checkpoint": config.value_checkpoint, "value_checkpoint_sha256": sha256(root / config.value_checkpoint),
+            "initial_checkpoint_fingerprint": initial_fingerprint,
+            "architecture_fingerprint": architecture_fingerprint(initial_model),
+            "initial_parameters_sha256": initial_parameter_sha},
+        "trainable_parameters": trainable_parameters, "requires_grad_audit": parameter_audit,
         "holdout_policy": "strategic_holdout excluded from optimization and pilot selection",
     }
     _write_json(ctx["output"] / "lot46b_pilot_preflight.json", report)
@@ -338,7 +354,8 @@ def _strategic_preservation(config: ExperimentConfig, root: Path, trained, devic
 def pilot_validate(config_path: Path, root: Path) -> dict:
     config = ExperimentConfig.load(config_path); _assert_pilot_contract(config)
     ctx = prepare_context(config, root)
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    if not torch.cuda.is_available(): raise Lot46Error("CUDA is mandatory for pilot validation")
+    device = torch.device("cuda")
     model, payload, latest = _latest_model(config, root, ctx, device)
     before = model_fingerprint(model)
     metrics = evaluate(model, ctx["splits"]["validation"], device)
@@ -373,17 +390,29 @@ def pilot_report(config_path: Path, root: Path) -> dict:
     source_counts = {s.target_source: 0 for s in config.dataset_sources}
     for row in history:
         for source, count in row.get("batch_source_counts", {}).items(): source_counts[source] = source_counts.get(source, 0) + count
+    preflight = _json(output / "lot46b_pilot_preflight.json")
+    latest_manifest = validation["checkpoint"]["manifest"]
     report = {
+        "experiment_id": config.experiment_id, "family": config.candidate_family,
+        "code_commit": status.get("code_commit"), "seed": config.seed,
+        "initial_checkpoint_sha256": preflight["initialization"]["initial_checkpoint_fingerprint"],
+        "dataset_fingerprint": ctx["dataset_fingerprint"], "split_fingerprint": ctx["split_fingerprint"],
+        "optimizer_steps": status["global_step"],
         "configuration": config.payload(), "dataset": {**ctx["dataset_audit"], "sources": ctx["source_audit"],
             "fingerprint": ctx["dataset_fingerprint"], "split_fingerprint": ctx["split_fingerprint"]},
         "initial_checkpoint": config.initial_checkpoint, "steps": status["global_step"],
         "training_metrics": {"last": history[-1] if history else None, "samples_seen": status["global_step"] * config.batch_size,
             "unique_states_seen": unique_states, "repeated_states": max(0, len(sampled) - unique_states),
             "effective_epochs": status["global_step"] * config.batch_size / len(ctx["splits"]["train"]),
-            "samples_per_second": status.get("samples_per_second"), "steps_per_second": status.get("steps_per_second")},
+            "samples_per_second": status.get("samples_per_second"), "steps_per_second": status.get("steps_per_second"),
+            "total_wall_time_seconds": status.get("total_wall_time_seconds"),
+            "training_wall_time_seconds": status.get("training_wall_time_seconds"),
+            "validation_seconds": status.get("validation_seconds"),
+            "checkpoint_write_seconds": status.get("checkpoint_write_seconds")},
         "validation_metrics": validation["validation_metrics"], "preservation_metrics": validation["preservation_metrics"],
         "GPU_metrics": status.get("gpu_metrics", {"status": "MISSING"}),
-        "checkpoint_integrity": validation, "resume_status": status.get("resume_validation", "PENDING_EXPLICIT_RESUME_TEST"),
+        "checkpoint_sha256": latest_manifest.get("sha256"), "checkpoint_integrity": validation,
+        "resume_validation": status.get("resume_validation", "PENDING_EXPLICIT_RESUME_TEST"),
         "limitations": ["offline pilot metrics do not demonstrate strategic strength", "no arena was run",
             "pilot budgets are too short for a strategic-strength conclusion"], "source_sample_counts": source_counts,
     }
@@ -396,7 +425,7 @@ def pilot_run(config_path: Path, root: Path, *, resume: bool = False, stop_after
     if not torch.cuda.is_available():
         raise Lot46Error("CUDA is mandatory for Lot46B-B1 scientific pilots")
     torch.cuda.reset_peak_memory_stats()
-    started = time.perf_counter()
+    torch.cuda.synchronize(); started = time.perf_counter()
     try:
         result = run_training(config, root, resume=resume, stop_after=stop_after)
     except Exception as exc:
@@ -405,24 +434,55 @@ def pilot_run(config_path: Path, root: Path, *, resume: bool = False, stop_after
             "stage": "pilot-resume" if resume else "pilot-run", "error_type": type(exc).__name__,
             "error_message": str(exc), "traceback": traceback.format_exc(), "timestamp": time.time()})
         raise
-    elapsed = time.perf_counter() - started
+    torch.cuda.synchronize(); elapsed = time.perf_counter() - started
     executed = result.get("steps_executed_this_invocation", result["global_step"])
     result["gpu_metrics"] = {"gpu_model": torch.cuda.get_device_name(0), "cuda_version": torch.version.cuda,
         "pytorch_version": torch.__version__, "vram_total_bytes": torch.cuda.get_device_properties(0).total_memory,
-        "vram_peak_bytes": torch.cuda.max_memory_allocated(), "elapsed_seconds": elapsed,
+        "vram_available_bytes": torch.cuda.mem_get_info()[0],
+        "vram_peak_bytes": torch.cuda.max_memory_allocated(),
+        "vram_peak_percent": 100.0 * torch.cuda.max_memory_allocated() / torch.cuda.get_device_properties(0).total_memory,
+        "elapsed_seconds": elapsed,
         "seconds_per_step": elapsed / max(1, executed),
         "samples_per_second": executed * config.batch_size / max(elapsed, 1e-9)}
     _write_json(Path(config.output_directory) / "status.json", result)
     return result
 
 
+def _state_equal(left, right) -> bool:
+    if torch.is_tensor(left) and torch.is_tensor(right): return torch.equal(left.cpu(), right.cpu())
+    if isinstance(left, dict) and isinstance(right, dict):
+        return left.keys() == right.keys() and all(_state_equal(left[key], right[key]) for key in left)
+    if isinstance(left, (list, tuple)) and isinstance(right, (list, tuple)):
+        return len(left) == len(right) and all(_state_equal(a, b) for a, b in zip(left, right))
+    try:
+        value = left == right
+        return bool(value.all()) if hasattr(value, "all") else bool(value)
+    except Exception:
+        return False
+
+
 def pilot_resume_test(config_path: Path, root: Path) -> dict:
     config = ExperimentConfig.load(config_path); _assert_pilot_contract(config)
+    if not torch.cuda.is_available(): raise Lot46Error("CUDA is mandatory for resume determinism")
     ctx = prepare_context(config, root); status = _json(ctx["output"] / "status.json")
-    evidence = {"status": "PASS" if status.get("resumed") and status.get("global_step") == config.max_steps else "FAIL",
+    with tempfile.TemporaryDirectory(prefix="lot46b-resume-") as temp:
+        base = Path(temp)
+        continuous = replace(config, output_directory=str(base / "continuous" / config.experiment_id))
+        interrupted = replace(config, output_directory=str(base / "interrupted" / config.experiment_id))
+        run_training(continuous, root)
+        run_training(interrupted, root, stop_after=50)
+        run_training(interrupted, root, resume=True)
+        continuous_ctx = prepare_context(continuous, root); interrupted_ctx = prepare_context(interrupted, root)
+        c_store = DurableCheckpointStore(continuous_ctx["output"] / "local_checkpoints", continuous_ctx["output"] / "durable_checkpoints")
+        i_store = DurableCheckpointStore(interrupted_ctx["output"] / "local_checkpoints", interrupted_ctx["output"] / "durable_checkpoints")
+        c_payload = torch.load(c_store.latest(config.experiment_id)[0], map_location="cpu", weights_only=False)
+        i_payload = torch.load(i_store.latest(config.experiment_id)[0], map_location="cpu", weights_only=False)
+        comparisons = {name: _state_equal(c_payload[name], i_payload[name]) for name in
+            ("model_state_dict", "optimizer_state_dict", "scheduler_state_dict", "sampler_state", "rng_state", "global_step")}
+    evidence = {"status": "PASS" if status.get("resumed") and all(comparisons.values()) else "FAIL",
         "resumed": status.get("resumed"), "global_step": status.get("global_step"),
-        "optimizer_scheduler_sampler_rng_restored": bool(status.get("resumed")),
-        "note": "resume_into validates and restores optimizer, scheduler, sampler and RNG before continuing"}
+        "comparisons": comparisons, "guarantee": "bit-for-bit on the active CUDA/PyTorch backend",
+        "main_checkpoint_untouched": True}
     status["resume_validation"] = evidence
     _write_json(ctx["output"] / "status.json", status)
     _write_json(ctx["output"] / "lot46b_resume_report.json", evidence)
@@ -436,24 +496,64 @@ def pilot_status(config_path: Path, root: Path) -> dict:
 
 def pilot_export(config_paths: list[Path], root: Path, bundle: Path) -> dict:
     configs = [ExperimentConfig.load(x) for x in config_paths]
-    reports = []
+    reports = []; report_payloads = []
     completed = []; failed = []
     for config in configs:
         _assert_pilot_contract(config); out = Path(config.output_directory)
         report = out / PILOT_FAMILIES[config.candidate_family]
         validation = out / "lot46b_pilot_validation.json"
         resume_report = out / "lot46b_resume_report.json"
-        if (report.is_file() and validation.is_file() and resume_report.is_file()
-                and _json(validation).get("status") == "PASS" and _json(resume_report).get("status") == "PASS"):
+        preflight = out / "lot46b_pilot_preflight.json"
+        payload = _optional_json(report) or {}; report_payloads.append(payload)
+        preservation = (_optional_json(validation) or {}).get("preservation_metrics", {})
+        preservation_ok = config.candidate_family == "VALUE_INDEPENDENT" or preservation.get("status") == "PASS"
+        leakage = (_optional_json(preflight) or {}).get("physical_state_overlap", {})
+        leakage_ok = bool(leakage) and not any(leakage.values())
+        if (report.is_file() and validation.is_file() and resume_report.is_file() and preflight.is_file()
+                and _json(validation).get("status") == "PASS" and _json(resume_report).get("status") == "PASS"
+                and preservation_ok and leakage_ok):
             completed.append(config.experiment_id)
         else: failed.append(config.experiment_id)
         reports.append((config, out, report))
-    all_valid = len(completed) == 4 and not failed
+    initial_fingerprints = {(_optional_json(out / "lot46b_pilot_preflight.json") or {}).get("initialization", {}).get("initial_parameters_sha256")
+        for _, out, _ in reports}
+    common_initialization = len(initial_fingerprints) == 1 and None not in initial_fingerprints
+    all_valid = len(completed) == 4 and not failed and common_initialization
+    comparison = {}
+    for config, payload in zip(configs, report_payloads):
+        metrics = payload.get("validation_metrics", {})
+        comparison[config.candidate_family] = ({"value_mse": metrics.get("value_mse"),
+            "value_mae": metrics.get("value_mae"), "value_sign_accuracy": metrics.get("value_sign_accuracy"),
+            "valid_z_count": metrics.get("value_labeled"),
+            "masked_z_count": max(0, metrics.get("positions", 0) - metrics.get("value_labeled", 0))}
+            if config.candidate_family == "VALUE_INDEPENDENT" else
+            {"policy_ce": metrics.get("policy_ce"), "policy_kl": metrics.get("policy_kl"),
+             "top1_agreement": metrics.get("top1_agreement"),
+             "preservation": payload.get("preservation_metrics")})
+    elapsed = [p.get("training_metrics", {}).get("total_wall_time_seconds") for p in report_payloads]
+    elapsed = [float(x) for x in elapsed if isinstance(x, (int, float)) and math.isfinite(x) and x > 0]
+    seconds_100 = sum(elapsed) / len(elapsed) if elapsed else None
+    checkpoint_sizes = []
+    for _, out, _ in reports:
+        latest = sorted((out / "durable_checkpoints").glob("checkpoint-*.pt"))
+        if latest: checkpoint_sizes.append(latest[-1].stat().st_size)
+    budget_estimates = {"basis": "linear extrapolation from measured 100-step pilots",
+        "seconds_per_100_steps": seconds_100,
+        "seconds_per_1000_steps": seconds_100 * 10 if seconds_100 is not None else None,
+        "estimated_time_5000_steps": seconds_100 * 50 if seconds_100 is not None else None,
+        "estimated_time_10000_steps": seconds_100 * 100 if seconds_100 is not None else None,
+        "checkpoint_overhead_bytes_mean": sum(checkpoint_sizes) / len(checkpoint_sizes) if checkpoint_sizes else None,
+        "estimated_storage_5000_steps_bytes": (sum(checkpoint_sizes) / len(checkpoint_sizes) * 50) if checkpoint_sizes else None,
+        "estimated_storage_10000_steps_bytes": (sum(checkpoint_sizes) / len(checkpoint_sizes) * 100) if checkpoint_sizes else None,
+        "scenarios": {"prudent_steps": 5000, "intermediate_steps": 10000, "ambitious_steps": 20000},
+        "not_launched": True}
     global_report = {"experiment_design": {"families": list(PILOT_FAMILIES), "seed": 20264621, "steps": 100},
         "completed_pilots": completed, "failed_pilots": failed, "training_stability": "PASS" if all_valid else "INCONCLUSIVE",
         "GPU_throughput": "see per-pilot reports", "VRAM_usage": "see per-pilot reports",
         "checkpoint_integrity": "PASS" if all_valid else "INCONCLUSIVE", "resume_validation": "PASS" if all_valid else "INCONCLUSIVE",
-        "offline_metrics": "AVAILABLE" if all_valid else "PARTIAL", "scientific_limitations": ["no arenas", "no strategic-strength claim"],
+        "offline_metrics": "AVAILABLE" if all_valid else "PARTIAL", "common_initialization": common_initialization,
+        "comparison": comparison, "budget_estimates": budget_estimates,
+        "scientific_limitations": ["single 100-step pilot per family", "no causal claim", "no arenas", "no strategic-strength claim"],
         "LOT46B_PILOT_VALID": "YES" if all_valid else "INCONCLUSIVE", "MAIN_TRAINING_READY": "YES" if all_valid else "NO"}
     bundle.parent.mkdir(parents=True, exist_ok=True)
     global_path = bundle.parent / "lot46b_pilot_report.json"; _write_json(global_path, global_report)
@@ -469,8 +569,14 @@ def pilot_export(config_paths: list[Path], root: Path, bundle: Path) -> dict:
                     archive.add(path, arcname=f"{config.experiment_id}/{path.relative_to(out)}")
             for manifest in sorted((out / "durable_checkpoints").glob("*.manifest.json")):
                 archive.add(manifest, arcname=f"{config.experiment_id}/checkpoint_references/{manifest.name}")
-    digest = sha256(bundle); Path(str(bundle) + ".sha256").write_text(f"{digest}  {bundle.name}\n")
+    with tarfile.open(bundle, "r:gz") as archive:
+        archive_members = archive.getnames()
+        if not archive_members: raise Lot46Error("pilot export verification found an empty archive")
+    digest = sha256(bundle); sidecar = Path(str(bundle) + ".sha256")
+    sidecar_tmp = sidecar.with_name(f".{sidecar.name}.tmp")
+    sidecar_tmp.write_text(f"{digest}  {bundle.name}\n"); sidecar_tmp.replace(sidecar)
     return {"EXPORT": "PASS", "path": str(bundle), "sha256": digest, "size": bundle.stat().st_size,
-        "weights_included": False, "global_report": global_report,
+        "archive_verified": True, "archive_members": len(archive_members), "sidecar": str(sidecar),
+        "weights_included": False, "checkpoint_references_only": True, "global_report": global_report,
         "MAIN_TRAINING_COMPLETED": "NO", "STRATEGIC_VALIDATION": "NOT_RUN", "ARENAS": "NOT_RUN",
         "SEARCH_COMPRESSION": "NOT_RUN", "G5_PROMOTED": "NO"}
