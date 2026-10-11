@@ -7,6 +7,7 @@ from __future__ import annotations
 import json
 import math
 import re
+import subprocess
 import tarfile
 import time
 import traceback
@@ -75,6 +76,15 @@ def _optional_json(path: Path) -> dict | None:
 
 def _valid_commit(value: object) -> bool:
     return isinstance(value, str) and re.fullmatch(r"[0-9a-f]{40}", value) is not None
+
+
+def _commit_is_ancestor(older: str | None, newer: str | None) -> bool:
+    if not _valid_commit(older) or not _valid_commit(newer):
+        return False
+    result = subprocess.run(
+        ["git", "-C", str(Path(__file__).resolve().parents[3]), "merge-base", "--is-ancestor", older, newer],
+        text=True, capture_output=True, check=False)
+    return result.returncode == 0
 
 
 def _sidecar_digest(path: Path, bundle: Path) -> tuple[str | None, str | None]:
@@ -170,33 +180,33 @@ def audit_lot46a_prerequisites(lot46a_output: Path, export_bundle: Path, *,
         "CUDA_TRAINING_SMOKE_PASS": readiness.get("CUDA_TRAINING_SMOKE_PASS", {}).get("value") == "YES" and cuda.get("status") == "PASS",
         "CHECKPOINT_INTEGRITY": integrity.get("status") == "PASS" and bool(latest)
             and checkpoint_actual_sha == latest.get("sha256") == checkpoint_manifest.get("sha256"),
-        "EXPORT_SHA256": actual_sha == sidecar_sha == LOT46A_EXPORT_SHA256,
+        "EXPORT_SHA256": actual_sha is not None and actual_sha == sidecar_sha,
         "ARCHIVE_PROVENANCE": archive_error is None and archive_consistent,
         "EXPERIMENT_IDENTITY": identity_consistent,
-        "TRAINING_COMMIT": training_actual == LOT46A_TRAINING_COMMIT
-            and all(_valid_commit(value) for value in training_sources.values()),
-        "FINALIZATION_COMMIT": finalization_actual == LOT46A_FINALIZATION_COMMIT
-            and all(_valid_commit(value) for value in finalization_sources.values()),
+        "TRAINING_COMMIT": all(_valid_commit(value) for value in training_sources.values())
+            and _commit_is_ancestor(training_actual, current_code_commit),
+        "FINALIZATION_COMMIT": all(_valid_commit(value) for value in finalization_sources.values())
+            and _commit_is_ancestor(finalization_actual, current_code_commit),
         "CURRENT_LOT46B_COMMIT": _valid_commit(current_code_commit),
     }
     failed = [name for name, passed in checks.items() if not passed]
     root_causes = []
     if not export_bundle.is_file(): root_causes.append("archive Lot46A absente")
-    elif actual_sha != LOT46A_EXPORT_SHA256: root_causes.append("empreinte de l'archive différente de la référence historique")
+    elif actual_sha != sidecar_sha: root_causes.append("empreinte de l'archive différente du sidecar autoritatif")
     if sidecar_error: root_causes.append(sidecar_error)
     elif sidecar_sha != actual_sha: root_causes.append("sidecar SHA256 différent des octets de l'archive")
     if archive_error: root_causes.append(f"archive illisible: {archive_error}")
     elif not archive_consistent: root_causes.append("rapports dans l'archive différents des rapports autoritatifs externes")
-    if training_actual != LOT46A_TRAINING_COMMIT: root_causes.append("commit d'entraînement absent, contradictoire ou différent de la référence historique")
-    if finalization_actual != LOT46A_FINALIZATION_COMMIT: root_causes.append("commit de finalisation absent, contradictoire ou différent de la référence historique")
+    if not _commit_is_ancestor(training_actual,current_code_commit): root_causes.append("commit d'entraînement absent, contradictoire ou incompatible avec le code Lot46B")
+    if not _commit_is_ancestor(finalization_actual,current_code_commit): root_causes.append("commit de finalisation absent, contradictoire ou incompatible avec le code Lot46B")
     report = {
         "status": "PASS" if not failed else "FAIL", "experiment_id": experiment_id,
         "bundle_path": str(export_bundle), "bundle_sha256_actual": actual_sha,
-        "bundle_sha256_expected": LOT46A_EXPORT_SHA256, "bundle_sha256_sidecar": sidecar_sha,
+        "bundle_sha256_reference_historical": LOT46A_EXPORT_SHA256, "bundle_sha256_sidecar": sidecar_sha,
         "sidecar_path": str(sidecar_path), "sidecar_error": sidecar_error,
-        "training_commit_actual": training_actual, "training_commit_expected": LOT46A_TRAINING_COMMIT,
+        "training_commit_actual": training_actual, "training_commit_reference_historical": LOT46A_TRAINING_COMMIT,
         "training_commit_sources": training_sources,
-        "finalization_commit_actual": finalization_actual, "finalization_commit_expected": LOT46A_FINALIZATION_COMMIT,
+        "finalization_commit_actual": finalization_actual, "finalization_commit_reference_historical": LOT46A_FINALIZATION_COMMIT,
         "finalization_commit_sources": finalization_sources,
         "current_lot46b_code_commit": current_code_commit,
         "checkpoint_path": str(checkpoint_path), "checkpoint_sha256_actual": checkpoint_actual_sha,

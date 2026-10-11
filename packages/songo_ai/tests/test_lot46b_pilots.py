@@ -124,6 +124,16 @@ def test_modified_bundle_and_correct_report_fails(tmp_path,monkeypatch):
         audit_lot46a_prerequisites(output,bundle,current_code_commit="4"*40)
 
 
+def test_fresh_consistent_export_is_not_rejected_by_historical_references(tmp_path,monkeypatch):
+    output,bundle,reports=_provenance_fixture(tmp_path,monkeypatch)
+    current="4c2339f9c1278aec1ad205fec8f7d14fc42f7306"
+    monkeypatch.setattr("songo_ai.training.lot46b.LOT46A_EXPORT_SHA256","0"*64)
+    monkeypatch.setattr("songo_ai.training.lot46b.LOT46A_TRAINING_COMMIT","1"*40)
+    monkeypatch.setattr("songo_ai.training.lot46b.LOT46A_FINALIZATION_COMMIT","2"*40)
+    report=audit_lot46a_prerequisites(output,bundle,current_code_commit=current)
+    assert report["status"]=="PASS" and all(report["checks"].values())
+
+
 @pytest.mark.parametrize("sidecar_value",[None,"not-a-sha bundle.tar.gz\n"])
 def test_sidecar_absent_or_invalid_fails_with_diagnostic(tmp_path,monkeypatch,sidecar_value):
     output,bundle,_=_provenance_fixture(tmp_path,monkeypatch);sidecar=Path(str(bundle)+".sha256")
@@ -151,8 +161,9 @@ def test_correct_archive_but_external_report_incoherent_fails(tmp_path,monkeypat
 
 def test_pilot_prepare_prerequisite_audit_is_idempotent(tmp_path,monkeypatch):
     output,bundle,_=_provenance_fixture(tmp_path,monkeypatch);diagnostic=tmp_path/"diagnostic.json"
-    first=audit_lot46a_prerequisites(output,bundle,diagnostic_path=diagnostic,current_code_commit="4"*40)
-    second=audit_lot46a_prerequisites(output,bundle,diagnostic_path=diagnostic,current_code_commit="4"*40)
+    current="4c2339f9c1278aec1ad205fec8f7d14fc42f7306"
+    first=audit_lot46a_prerequisites(output,bundle,diagnostic_path=diagnostic,current_code_commit=current)
+    second=audit_lot46a_prerequisites(output,bundle,diagnostic_path=diagnostic,current_code_commit=current)
     for report in (first,second): report.pop("checked_at")
     assert first==second
 
