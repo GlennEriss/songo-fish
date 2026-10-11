@@ -88,6 +88,12 @@ def test_duplicate_reanalysis_rows_merge_terminal_provenance(tmp_path):
     assert rows[0]["z_mean"]==-1.0
     assert validate_rows(rows)["value_labeled"]==1
 
+    mixed={**base,"z_counts":None,"z_perspective":None,"value_target_available":False,"z_mean":None}
+    dataset.write_text(json.dumps(base)+"\n"+json.dumps(mixed)+"\n")
+    rows,audit=load_sources(cfg,tmp_path)
+    assert rows[0]["z_counts"]=={"win":0,"draw":0,"loss":1,"unknown":1}
+    assert rows[0]["z_mean"]==-1.0 and validate_rows(rows)["value_labeled"]==1
+
 
 def test_global_split_prevents_cross_corpus_state_leakage():
     rows=[{"fingerprint":"same","split_group":"game-a","holdout":True},{"fingerprint":"same","split_group":"game-a"},{"fingerprint":"other","split_group":"game-b"}]

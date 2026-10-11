@@ -284,6 +284,20 @@ def _canonical_reanalysis(row: dict, source: DatasetSource) -> dict:
             "source_occurrence_count": int(row.get("source_occurrence_count", 1)), "source_kind": source.kind}
 
 
+def _terminal_counts(row: dict) -> dict[str, int]:
+    counts = row.get("z_counts")
+    if isinstance(counts, dict):
+        return {key: int(counts.get(key, 0)) for key in ("win", "draw", "loss", "unknown")}
+    occurrences = int(row.get("source_occurrence_count", 1))
+    if not row.get("value_target_available"):
+        return {"win": 0, "draw": 0, "loss": 0, "unknown": occurrences}
+    z = row.get("z_mean")
+    if z not in (-1, 0, 1, -1.0, 0.0, 1.0):
+        raise Lot46Error(f"duplicate Value target lacks mergeable terminal provenance: {z}")
+    return {"win": occurrences if z == 1 else 0, "draw": occurrences if z == 0 else 0,
+            "loss": occurrences if z == -1 else 0, "unknown": 0}
+
+
 def load_sources(config: ExperimentConfig, root: Path) -> tuple[list[dict], dict]:
     by_fp: dict[str, dict] = {}; provenance = {}; conflicts = []
     for source in config.dataset_sources:
@@ -308,18 +322,19 @@ def load_sources(config: ExperimentConfig, root: Path) -> tuple[list[dict], dict
             if fp in by_fp:
                 old = by_fp[fp]
                 if old["state"] != row["state"]: conflicts.append(fp); continue
-                old_counts, new_counts = old.get("z_counts"), row.get("z_counts")
-                if old_counts is not None or new_counts is not None:
-                    if not isinstance(old_counts, dict) or not isinstance(new_counts, dict):
-                        raise Lot46Error(f"incompatible duplicate Value provenance for physical state: {fp}")
-                    if old.get("z_perspective") != row.get("z_perspective"):
+                if old.get("z_counts") is not None or row.get("z_counts") is not None:
+                    old_perspective = old.get("z_perspective") or "player_to_move"
+                    new_perspective = row.get("z_perspective") or "player_to_move"
+                    if old_perspective != new_perspective:
                         raise Lot46Error(f"incompatible duplicate z perspective for physical state: {fp}")
-                    merged_counts = {key: int(old_counts.get(key, 0)) + int(new_counts.get(key, 0))
+                    old_counts, new_counts = _terminal_counts(old), _terminal_counts(row)
+                    merged_counts = {key: old_counts[key] + new_counts[key]
                                      for key in ("win", "draw", "loss", "unknown")}
                     known = merged_counts["win"] + merged_counts["draw"] + merged_counts["loss"]
                     old["z_counts"] = merged_counts
                     old["z_mean"] = ((merged_counts["win"] - merged_counts["loss"]) / known) if known else None
                     old["value_target_available"] = known > 0
+                    old["z_perspective"] = old_perspective
                 old.setdefault("source_variants", []).append({"target_source": row["target_source"], "target_budget": row["target_budget"]})
                 old["source_occurrence_count"] += row["source_occurrence_count"]
                 old["holdout"] = old["holdout"] or row["holdout"]
