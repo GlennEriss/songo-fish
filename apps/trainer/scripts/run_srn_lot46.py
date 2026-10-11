@@ -26,6 +26,7 @@ from songo_ai.training.lot46a import (DurableCheckpointStore, ExperimentConfig, 
     run_training, validate_scientific_inputs, WeightedStatefulSampler, configure_trainable)
 from songo_ai.training.lot46b import (pilot_export, pilot_prepare, pilot_report,
     pilot_resume_test, pilot_run, pilot_status, pilot_validate, stage_a_export, stage_a_prepare, stage_a_report)
+from songo_ai.training.lot46b_b0 import run_stage_b0
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
 ROOT = REPOSITORY_ROOT / "data/experiments/lot46_g5_training"
@@ -504,10 +505,16 @@ def finalize_a(config_path: Path) -> dict:
 def main() -> None:
     stages=("prepare-inputs","audit","plan","smoke","preflight","prepare","prepare-a","micro-overfit","train","resume","validate","inspect-checkpoint","status","resume-test","finalize-a","export-a",
             "pilot-prepare","pilot-run","pilot-resume","pilot-validate","pilot-status","pilot-report","pilot-resume-test","pilot-export",
-            "stage-a-prepare","stage-a-run","stage-a-resume","stage-a-validate","stage-a-status","stage-a-report","stage-a-export")
+            "stage-a-prepare","stage-a-run","stage-a-resume","stage-a-validate","stage-a-status","stage-a-report","stage-a-export",
+            "stage-b0-preaudit")
     p = argparse.ArgumentParser(description=__doc__); p.add_argument("--stage", choices=stages, default="prepare"); p.add_argument("--output", type=Path, default=ROOT); p.add_argument("--bundle", type=Path, default=Path("data/colab_bridge/lot46_inputs.tar.gz")); p.add_argument("--config",type=Path)
     p.add_argument("--configs",type=Path,nargs="*"); p.add_argument("--lot46a-output",type=Path); p.add_argument("--lot46a-export",type=Path); p.add_argument("--stop-after",type=int)
     a = p.parse_args()
+    if a.stage == "stage-b0-preaudit":
+        if not a.configs or len(a.configs) != 4: raise Lot46Error("stage-b0-preaudit requires exactly four --configs")
+        if not a.lot46a_output or not a.lot46a_export: raise Lot46Error("stage-b0-preaudit requires --lot46a-output (B1 bundle) and --lot46a-export (Stage A bundle)")
+        result=run_stage_b0(a.configs,a.lot46a_export,a.lot46a_output,a.output)
+        print(json.dumps(result,indent=2,default=str));return
     if a.stage == "prepare-inputs": prepare_inputs(a.bundle); return
     if a.stage.startswith("pilot-") or a.stage.startswith("stage-a-"):
         if a.stage in {"pilot-export", "stage-a-export"}:
