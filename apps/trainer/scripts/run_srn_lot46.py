@@ -22,8 +22,10 @@ from songo_ai.training.lot46 import (Lot46Dataset, Lot46Error, atomic_torch_save
                                      collate, group_aware_split, lot46_loss,
                                      rng_state, sha256)
 from songo_ai.training.lot46a import (DurableCheckpointStore, ExperimentConfig, canonical_hash,
-    evaluate, load_initial_model, make_optimizer_scheduler, prepare_context, resume_into,
-    run_training, WeightedStatefulSampler, configure_trainable)
+    architecture_fingerprint, evaluate, load_initial_model, make_optimizer_scheduler, prepare_context, resume_into,
+    run_training, validate_scientific_inputs, WeightedStatefulSampler, configure_trainable)
+from songo_ai.training.lot46b import (pilot_export, pilot_prepare, pilot_report,
+    pilot_resume_test, pilot_run, pilot_status, pilot_validate)
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
 ROOT = REPOSITORY_ROOT / "data/experiments/lot46_g5_training"
@@ -32,6 +34,9 @@ G4 = REPOSITORY_ROOT / "data/experiments/lot35_generator_pool/g4_champion_identi
 DATASET = LOT45 / "dataset/g5_deep_autonomous_reanalysis_v1.jsonl.gz"
 LOT46_INPUT_FILES = (
     G4,
+    Path("data/d_rl/lot11_g1_selected_seed_20260924.jsonl"),
+    Path("data/d_scale_v1/d_strategic_sample/qdiag256.jsonl"),
+    Path("data/experiments/lot25_scale/strategic_manifest.json"),
     Path("data/experiments/lot34r_g4_retry/checkpoints/control/step-08000.pt"),
     Path("data/experiments/lot34r_g4_retry/checkpoints/control/step-12000.pt"),
     Path("data/experiments/lot34r_g4_retry/checkpoints/pool/step-06000.pt"),
@@ -70,14 +75,14 @@ def prepare_inputs(bundle: Path) -> None:
     missing = [str(path) for path in files if not path.is_file()]
     if missing:
         raise FileNotFoundError(f"Lot46 input files missing: {missing}")
-    manifest = {"lot": 46, "purpose": "G4R_FROZEN_BASELINES", "files": {str(p.relative_to(REPOSITORY_ROOT)): sha256(p) for p in files}}
-    manifest_path = REPOSITORY_ROOT / "lot46_input_manifest.json"
+    manifest = {"lot": 46, "purpose": "G4R_FROZEN_BASELINES_AND_LOT46A_SCIENTIFIC_INPUTS", "files": {str(p.relative_to(REPOSITORY_ROOT)): sha256(p) for p in files}}
+    manifest_path = bundle.parent / ".lot46_input_manifest.tmp.json"
     atomic_json(manifest_path, manifest)
     bundle.parent.mkdir(parents=True, exist_ok=True)
     temporary = bundle.with_name(f".{bundle.name}.tmp")
     try:
         with tarfile.open(temporary, "w:gz") as archive:
-            archive.add(manifest_path, arcname=manifest_path.name)
+            archive.add(manifest_path, arcname="lot46_input_manifest.json")
             for path in files:
                 archive.add(path, arcname=str(path.relative_to(REPOSITORY_ROOT)))
         temporary.replace(bundle)
@@ -243,7 +248,11 @@ def repository_audit(out: Path) -> dict:
 
 
 def prepare_a(config_path: Path) -> dict:
-    cfg=ExperimentConfig.load(config_path); ctx=prepare_context(cfg,REPOSITORY_ROOT); out=ctx["output"]; out.mkdir(parents=True,exist_ok=True)
+    cfg=ExperimentConfig.load(config_path)
+    out=Path(cfg.output_directory);out=out if out.is_absolute() else REPOSITORY_ROOT/out;out.mkdir(parents=True,exist_ok=True)
+    validate_scientific_inputs(cfg,REPOSITORY_ROOT,stage="prepare-a",audit_path=out/"lot46a_input_dependency_audit.json")
+    ctx=prepare_context(cfg,REPOSITORY_ROOT)
+    code_commit=git_commit()
     audit=repository_audit(out); splits=ctx["splits"]
     memberships={k:{x["fingerprint"] for x in v} for k,v in splits.items()}
     overlaps={"train_validation":len(memberships["train"]&memberships["validation"]),
@@ -254,13 +263,13 @@ def prepare_a(config_path: Path) -> dict:
              "limitations":"split_group is used when present; physical fingerprint is authoritative across all sources"}
     atomic_json(out/"lot46a_dataset_audit.json",{**ctx["dataset_audit"],**ctx["source_audit"],"dataset_fingerprint":ctx["dataset_fingerprint"]})
     atomic_json(out/"lot46a_leakage_audit.json",leakage)
-    plan={"candidate_families":sorted(["CONTROL","DEEP_POLICY","DEEP_POLICY_REPLAY","VALUE_INDEPENDENT"]),
+    plan={"code_commit":code_commit,"candidate_families":sorted(["CONTROL","DEEP_POLICY","DEEP_POLICY_REPLAY","VALUE_INDEPENDENT"]),
           "active_experiment":cfg.payload(),"training_budgets":{"optimizer_steps":cfg.max_steps,"examples_seen":cfg.max_steps*cfg.batch_size},
           "optimizer_settings":cfg.optimizer,"scheduler":cfg.scheduler,"validation_schedule":cfg.validation_interval,
           "checkpoint_schedule":cfg.checkpoint_interval,"gpu_requirements":"CUDA for scientific runs; CPU for deterministic tests",
           "estimated_runtime":"NOT_ESTIMATED_UNTIL_PILOT","full_training_confirmed":cfg.confirm_full_training}
     atomic_json(out/"lot46a_training_plan.json",plan)
-    registry={"candidates":[{"candidate_id":cfg.experiment_id,"family":cfg.candidate_family,"initial_checkpoint":cfg.initial_checkpoint,
+    registry={"code_commit":code_commit,"candidates":[{"candidate_id":cfg.experiment_id,"family":cfg.candidate_family,"initial_checkpoint":cfg.initial_checkpoint,
         "training_config":cfg.payload(),"dataset_sources":[asdict_source(x) for x in cfg.dataset_sources],"split_fingerprint":ctx["split_fingerprint"],
         "checkpoint_paths":[],"training_status":"PREFLIGHT_PASSED","validation_status":"NOT_STARTED"}]}
     atomic_json(out/"candidate_registry.json",registry); atomic_json(out/"configuration.json",cfg.payload())
@@ -334,18 +343,63 @@ def export_a(config_path: Path, bundle: Path) -> dict:
     return {"EXPORT":"PASS","path":str(bundle),"sha256":digest,"size":bundle.stat().st_size}
 
 
+def cuda_training_evidence(status: dict | None, latest: tuple[Path,dict] | None,
+                           legacy_smoke: dict | None) -> tuple[bool,dict | None]:
+    legacy_pass=bool(legacy_smoke and legacy_smoke.get("status")=="PASS" and legacy_smoke.get("cuda_training_smoke"))
+    run_pass=bool(status and status.get("status") in {"COMPLETED","RESUMABLE"} and status.get("device")=="cuda"
+                  and status.get("checkpoint_durable") is True and latest
+                  and status.get("validation",{}).get("no_grad_parameter_invariance") is True)
+    if run_pass:
+        return True,{"source":"main_training_status","experiment_id":status.get("experiment_id"),
+                     "code_commit":status.get("code_commit"),"global_step":status.get("global_step"),
+                     "device":status.get("device"),"checkpoint_manifest":latest[1],
+                     "validation_no_grad_parameter_invariance":True}
+    return legacy_pass,legacy_smoke
+
+
+def audit_final_checkpoint(cfg: ExperimentConfig, status: dict | None, assignment: dict | None,
+                           latest: tuple[Path,dict] | None) -> dict:
+    if not status or not assignment or not latest:
+        return {"status":"FAIL","reason":"status, assignment, or durable checkpoint missing"}
+    path,manifest=latest;before=sha256(path)
+    try:
+        payload=torch.load(path,map_location="cpu",weights_only=False)
+        model,_=load_initial_model(cfg,REPOSITORY_ROOT,torch.device("cpu"))
+        model.load_state_dict(payload["model_state_dict"],strict=True)
+        finite=all(torch.isfinite(x).all().item() for x in model.state_dict().values())
+        checks={
+          "experiment_id":payload.get("experiment_id")==cfg.experiment_id==status.get("experiment_id")==assignment.get("experiment_id"),
+          "global_step":payload.get("global_step")==status.get("global_step")==manifest.get("step") and int(payload.get("global_step",0))>0,
+          "checkpoint_sha256":before==manifest.get("sha256"),
+          "config_fingerprint":payload.get("training_config_fingerprint")==assignment.get("config_fingerprint")==canonical_hash(cfg.payload()),
+          "code_commit":payload.get("code_commit")==status.get("code_commit")==assignment.get("code_commit"),
+          "dataset_fingerprint":payload.get("dataset_fingerprint")==status.get("dataset_fingerprint"),
+          "architecture":payload.get("architecture_fingerprint")==architecture_fingerprint(model),
+          "parameters_finite":finite,
+        }
+        after=sha256(path);checks["parameters_unchanged"]=before==after
+        return {"status":"PASS" if all(checks.values()) else "FAIL","path":str(path),"sha256_before":before,
+                "sha256_after":after,"checks":checks,"training_code_commit":payload.get("code_commit"),
+                "finalization_code_commit":git_commit()}
+    except Exception as exc:
+        return {"status":"FAIL","path":str(path),"sha256_before":before,
+                "error_type":type(exc).__name__,"error_message":str(exc),"finalization_code_commit":git_commit()}
+
+
 def finalize_a(config_path: Path) -> dict:
     cfg=ExperimentConfig.load(config_path);ctx=prepare_context(cfg,REPOSITORY_ROOT);out=ctx["output"]
     def read(name): return json.loads((out/name).read_text()) if (out/name).is_file() else None
-    micro=read("lot46a_micro_overfit.json");resume=read("lot46a_resume_test.json");leak=read("lot46a_leakage_audit.json");status=read("status.json")
+    micro=read("lot46a_micro_overfit.json");resume=read("lot46a_resume_test.json");leak=read("lot46a_leakage_audit.json");status=read("status.json");assignment=read("experiment_assignment.json")
     store=DurableCheckpointStore(out/"local_checkpoints",out/"durable_checkpoints");latest=store.latest(cfg.experiment_id)
-    integrity={"status":"PASS" if latest else "NOT_TESTED","latest":latest[1] if latest else None,
+    final_checkpoint=audit_final_checkpoint(cfg,status,assignment,latest)
+    integrity={"status":"PASS" if latest and final_checkpoint.get("status")=="PASS" else "FAIL","latest":latest[1] if latest else None,
+               "final_checkpoint_audit":final_checkpoint,
                "corruption_recovery_tested":True,"partial_checkpoint_ignored_tested":True}
     atomic_json(out/"lot46a_checkpoint_integrity.json",integrity)
     drive_base=out.parents[1]/"lot46_g5_training" if len(out.parents)>1 else ROOT
     base_smoke=read("smoke_test_report.json") or (json.loads((drive_base/"smoke_test_report.json").read_text()) if (drive_base/"smoke_test_report.json").is_file() else None)
-    cuda_pass=bool(base_smoke and base_smoke.get("status")=="PASS" and base_smoke.get("cuda_training_smoke"))
-    cuda={"status":"PASS" if cuda_pass else "NOT_TESTED","evidence":base_smoke,"required":"forward/backward/optimizer/checkpoint on CUDA"}
+    cuda_pass,cuda_evidence=cuda_training_evidence(status,latest if final_checkpoint.get("status")=="PASS" else None,base_smoke)
+    cuda={"status":"PASS" if cuda_pass else "NOT_TESTED","evidence":cuda_evidence,"required":"forward/backward/optimizer/checkpoint on CUDA"}
     atomic_json(out/"lot46a_cuda_smoke.json",cuda)
     g4_rows=[]
     for arm,item in candidates().items():
@@ -360,7 +414,7 @@ def finalize_a(config_path: Path) -> dict:
       "CORRECT_AND_PRESERVE_VALID":("YES","historical correction_loss/preservation_loss used with frozen qdiag battery"),
       "MICRO_OVERFIT_PASS":("YES" if micro and micro.get("status")=="PASS" else "NO" if micro else "NOT_TESTED","real-data micro run"),
       "RESUME_DETERMINISM_PASS":("YES" if resume and resume.get("status")=="PASS" else "NO" if resume else "NOT_TESTED","continuous vs interrupted CPU run"),
-      "CHECKPOINT_DURABILITY_PASS":("YES" if latest else "NOT_TESTED","versioned durable file plus committed checksum manifest"),
+      "CHECKPOINT_DURABILITY_PASS":("YES" if integrity["status"]=="PASS" else "NO","durable checkpoint loaded, finite, compatible, and unchanged"),
       "END_TO_END_SMOKE_PASS":("YES" if status and status.get("status") in {"COMPLETED","RESUMABLE"} else "NOT_TESTED","prepare/train/checkpoint/validate status"),
       "CUDA_TRAINING_SMOKE_PASS":("YES" if cuda_pass else "NOT_TESTED","must be executed on Colab GPU"),
       "CROSS_CORPUS_LEAKAGE_AUDIT_PASS":("YES" if leak and leak.get("status")=="PASS" else "NO" if leak else "NOT_TESTED","global physical-state split"),
@@ -368,7 +422,8 @@ def finalize_a(config_path: Path) -> dict:
     ready={k:{"value":v[0],"justification":v[1]} for k,v in fields.items()}; valid=all(v[0]=="YES" for v in fields.values())
     ready.update({"LOT46A_VALID":"YES" if valid else "NO","LOT46B_TRAINING_READY":"YES" if valid else "NO"})
     atomic_json(out/"lot46a_readiness_report.json",ready)
-    engineering={"repository_audit":read("lot46a_repository_audit.json"),"files_modified":["training/lot46a.py","run_srn_lot46.py","notebook","configs","tests"],
+    engineering={"training_code_commit":status.get("code_commit") if status else None,"finalization_code_commit":git_commit(),
+       "repository_audit":read("lot46a_repository_audit.json"),"files_modified":["training/lot46a.py","run_srn_lot46.py","notebook","configs","tests"],
        "tests_executed":"see test_report/CLI output","tests_passed":None,"tests_failed":None,"micro_overfit_results":micro,
        "resume_results":resume,"checkpoint_integrity":integrity,"dataset_integrity":ctx["dataset_audit"],"GPU_validation":cuda,
        "known_limitations":["trajectory/game overlap cannot be proven where historical metadata is absent","CUDA determinism is tolerance-based and not claimed by CPU resume test"]}
@@ -376,9 +431,28 @@ def finalize_a(config_path: Path) -> dict:
 
 
 def main() -> None:
-    stages=("prepare-inputs","audit","plan","smoke","preflight","prepare","prepare-a","micro-overfit","train","resume","validate","inspect-checkpoint","status","resume-test","finalize-a","export-a")
-    p = argparse.ArgumentParser(description=__doc__); p.add_argument("--stage", choices=stages, default="prepare"); p.add_argument("--output", type=Path, default=ROOT); p.add_argument("--bundle", type=Path, default=Path("data/colab_bridge/lot46_inputs.tar.gz")); p.add_argument("--config",type=Path); a = p.parse_args()
+    stages=("prepare-inputs","audit","plan","smoke","preflight","prepare","prepare-a","micro-overfit","train","resume","validate","inspect-checkpoint","status","resume-test","finalize-a","export-a",
+            "pilot-prepare","pilot-run","pilot-resume","pilot-validate","pilot-status","pilot-report","pilot-resume-test","pilot-export")
+    p = argparse.ArgumentParser(description=__doc__); p.add_argument("--stage", choices=stages, default="prepare"); p.add_argument("--output", type=Path, default=ROOT); p.add_argument("--bundle", type=Path, default=Path("data/colab_bridge/lot46_inputs.tar.gz")); p.add_argument("--config",type=Path)
+    p.add_argument("--configs",type=Path,nargs="*"); p.add_argument("--lot46a-output",type=Path); p.add_argument("--lot46a-export",type=Path); p.add_argument("--stop-after",type=int)
+    a = p.parse_args()
     if a.stage == "prepare-inputs": prepare_inputs(a.bundle); return
+    if a.stage.startswith("pilot-"):
+        if a.stage == "pilot-export":
+            if not a.configs or len(a.configs) != 4: raise Lot46Error("--stage pilot-export requires exactly four --configs")
+            result=pilot_export(a.configs,REPOSITORY_ROOT,a.bundle)
+        else:
+            if not a.config: raise Lot46Error(f"--stage {a.stage} requires --config")
+            if a.stage == "pilot-prepare":
+                if not a.lot46a_output or not a.lot46a_export: raise Lot46Error("pilot-prepare requires --lot46a-output and --lot46a-export")
+                result=pilot_prepare(a.config,REPOSITORY_ROOT,a.lot46a_output,a.lot46a_export)
+            elif a.stage == "pilot-run": result=pilot_run(a.config,REPOSITORY_ROOT,stop_after=a.stop_after)
+            elif a.stage == "pilot-resume": result=pilot_run(a.config,REPOSITORY_ROOT,resume=True)
+            elif a.stage == "pilot-validate": result=pilot_validate(a.config,REPOSITORY_ROOT)
+            elif a.stage == "pilot-status": result=pilot_status(a.config,REPOSITORY_ROOT)
+            elif a.stage == "pilot-report": result=pilot_report(a.config,REPOSITORY_ROOT)
+            else: result=pilot_resume_test(a.config,REPOSITORY_ROOT)
+        print(json.dumps(result,indent=2,default=str));return
     if a.stage in {"prepare-a","micro-overfit","train","resume","validate","inspect-checkpoint","status","resume-test","finalize-a","export-a"}:
         if not a.config: raise Lot46Error(f"--stage {a.stage} requires --config")
         if a.stage=="prepare-a": result=prepare_a(a.config)
@@ -392,9 +466,9 @@ def main() -> None:
                     "error_type":type(exc).__name__,"error_message":str(exc),"traceback":traceback.format_exc(),"timestamp":time.time()})
                 raise
         elif a.stage=="validate":
-            cfg=ExperimentConfig.load(a.config);ctx=prepare_context(cfg,REPOSITORY_ROOT);device=torch.device("cuda" if cfg.device=="cuda" and torch.cuda.is_available() else "cpu");model,fp=load_initial_model(cfg,REPOSITORY_ROOT,device);configure_trainable(model,cfg.candidate_family,cfg.training_mode);opt,sch=make_optimizer_scheduler(model,cfg);sampler=WeightedStatefulSampler(ctx["splits"]["train"],{s.target_source:s.weight for s in cfg.dataset_sources},cfg.seed,cfg.batch_size);store=DurableCheckpointStore(ctx["output"]/"local_checkpoints",ctx["output"]/"durable_checkpoints");latest=store.latest(cfg.experiment_id)
+            cfg=ExperimentConfig.load(a.config);ctx=prepare_context(cfg,REPOSITORY_ROOT);device=torch.device("cuda" if cfg.device in {"cuda","auto"} and torch.cuda.is_available() else "cpu");model,fp=load_initial_model(cfg,REPOSITORY_ROOT,device);configure_trainable(model,cfg.candidate_family,cfg.training_mode);opt,sch=make_optimizer_scheduler(model,cfg);sampler=WeightedStatefulSampler(ctx["splits"]["train"],{s.target_source:s.weight for s in cfg.dataset_sources},cfg.seed,cfg.batch_size);store=DurableCheckpointStore(ctx["output"]/"local_checkpoints",ctx["output"]/"durable_checkpoints");latest=store.latest(cfg.experiment_id)
             if not latest:raise Lot46Error("no checkpoint to validate")
-            resume_into(latest[0],config=cfg,model=model,optimizer=opt,scheduler=sch,sampler=sampler,dataset_fingerprint=ctx["dataset_fingerprint"],split_fingerprint=ctx["split_fingerprint"],initial_fingerprint=fp);result=evaluate(model,ctx["splits"]["validation"],device);atomic_json(ctx["output"]/"validation.json",result)
+            resume_into(latest[0],config=cfg,model=model,optimizer=opt,scheduler=sch,sampler=sampler,dataset_fingerprint=ctx["dataset_fingerprint"],split_fingerprint=ctx["split_fingerprint"],initial_fingerprint=fp,code_commit=git_commit());result=evaluate(model,ctx["splits"]["validation"],device);atomic_json(ctx["output"]/"validation.json",result)
         elif a.stage=="inspect-checkpoint": result=inspect_checkpoint_a(a.config)
         elif a.stage=="status":
             cfg=ExperimentConfig.load(a.config);out=Path(cfg.output_directory);out=out if out.is_absolute() else REPOSITORY_ROOT/out;result=json.loads((out/"status.json").read_text()) if (out/"status.json").is_file() else {"status":"NOT_STARTED"}
