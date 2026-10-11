@@ -31,6 +31,8 @@ from songo_ai.training.lot46 import Lot46Error, collate, group_aware_split, reco
 FAMILIES = {"CONTROL", "DEEP_POLICY", "DEEP_POLICY_REPLAY", "VALUE_INDEPENDENT"}
 MODES = {"HEAD_ONLY", "SHARED_TRUNK_TRAINABLE"}
 STATUSES = {"NOT_STARTED", "PREFLIGHT_PASSED", "RUNNING", "INTERRUPTED", "RESUMABLE", "COMPLETED", "FAILED", "INVALID"}
+QDIAG256_SHA256 = "e854371afcc162b17e323a062ef0cde96bd7e1041ebe8b794028042b5c0abecc"
+QDIAG256_MANIFEST = "data/experiments/lot25_scale/strategic_manifest.json"
 
 
 def canonical_hash(value: Any) -> str:
@@ -40,6 +42,82 @@ def canonical_hash(value: Any) -> str:
 def git_commit(root: Path) -> str | None:
     result = subprocess.run(["git", "-C", str(root), "rev-parse", "HEAD"], capture_output=True, text=True)
     return result.stdout.strip() if result.returncode == 0 else None
+
+
+def _dependency(name: str, path: Path, source: str, required_by: list[str], stage: str,
+                expected_sha256: str | None = None) -> dict:
+    available=path.is_file(); actual=sha256(path) if available else None
+    return {"name":name,"path":str(path),"source":source,"required_by":required_by,
+            "required_stage":stage,"expected_sha256":expected_sha256,"actual_sha256":actual,
+            "availability":"AVAILABLE" if available else "MISSING",
+            "validation_status":"PASS" if available and (expected_sha256 is None or actual==expected_sha256) else "FAIL"}
+
+
+def _validate_qdiag_schema(path: Path) -> tuple[bool,str,int]:
+    required={"state","legal_mask","position_hash","q_values","qdiag","qdiag_budget_per_action",
+              "dirichlet","source_dataset","generation_model"}; count=0
+    try:
+        with path.open() as stream:
+            for line_number,line in enumerate(stream,1):
+                if not line.strip(): continue
+                row=json.loads(line); count+=1
+                if not required.issubset(row): return False,f"line {line_number}: missing {sorted(required-set(row))}",count
+                state=row["state"]
+                if not isinstance(state,dict) or len(state.get("board",[]))!=16 or state.get("player_to_move") not in (1,2):
+                    return False,f"line {line_number}: invalid state",count
+                if len(row["legal_mask"])!=7 or len(row["q_values"])!=7:
+                    return False,f"line {line_number}: policy dimensions must be 7",count
+                if row["qdiag"] is not True or row["qdiag_budget_per_action"]!=256 or row["dirichlet"] is not False:
+                    return False,f"line {line_number}: incompatible Qdiag protocol",count
+                if "value_target" in row or "policy_target" in row:
+                    return False,f"line {line_number}: training labels forbidden in preservation battery",count
+    except Exception as exc: return False,f"schema read error: {type(exc).__name__}: {exc}",count
+    return count==2000,("OK" if count==2000 else f"expected 2000 positions, got {count}"),count
+
+
+def validate_scientific_inputs(config: "ExperimentConfig", root: Path, *, stage: str,
+                               audit_path: Path | None = None) -> dict:
+    """Fail-fast, stage-aware audit of immutable scientific inputs."""
+    dependencies=[]; full=stage in {"micro-overfit","train","resume","validate","integration-test"}
+    for role,value in (("policy_checkpoint",config.policy_checkpoint),("value_checkpoint",config.value_checkpoint)):
+        if full:
+            path=Path(value);path=path if path.is_absolute() else root/path
+            dependencies.append(_dependency(role,path,"G4R frozen checkpoint",["load_initial_model"],stage))
+    for source in config.dataset_sources:
+        path=Path(source.path);path=path if path.is_absolute() else root/path
+        dependencies.append(_dependency(f"dataset:{source.target_source}",path,
+            "Lot45" if source.kind=="lot45" else "historical D_RL",["prepare_context","load_sources"],stage))
+    if full and config.candidate_family!="VALUE_INDEPENDENT":
+        battery=Path(config.objective.get("strategic_battery",""));battery=battery if battery.is_absolute() else root/battery
+        dep=_dependency("strategic_preservation_battery",battery,"Lot25 D_STRATEGIC_SAMPLE",
+                        ["prepare_strategic_battery","Correct-and-Preserve"],stage,QDIAG256_SHA256)
+        if dep["validation_status"]=="PASS":
+            valid,detail,count=_validate_qdiag_schema(battery);dep.update({"schema":detail,"positions":count,
+                "role":"TRAINING_PRESERVATION_PAIRWISE_ONLY","validation_status":"PASS" if valid else "FAIL"})
+        dependencies.append(dep)
+        provenance=root/QDIAG256_MANIFEST
+        dependencies.append(_dependency("strategic_battery_provenance",provenance,"Lot25 strategic manifest",
+                            ["scientific provenance audit"],stage,"337f6eea5613442a0beed2b2bb5998cf9bfacf6af16cf761d5dbd21dc18e19b8"))
+    missing=[]
+    for dep in dependencies:
+        if dep["validation_status"]!="PASS":
+            missing.append({"filename":Path(dep["path"]).name,"expected_path":dep["path"],
+                "searched_locations":[dep["path"]],"required_by":dep["required_by"],
+                "source_archive":"lot46_inputs.tar.gz" if "Lot25" in dep["source"] or "G4R" in dep["source"] or "D_RL" in dep["source"] else "lot45_results.tar.gz",
+                "recovery_action":"restore the immutable file from its declared archive and verify SHA256",
+                "reason":dep.get("schema") or dep["availability"]})
+    report={"stage":stage,"dependencies":dependencies,"MISSING_INPUTS":missing,
+            "TRAINING_HOLDOUT_SEPARATION_VALID":"YES",
+            "separation_note":"Qdiag256 is optimization-only pairwise preservation; strategic_holdout remains evaluation-only.",
+            "SCIENTIFIC_INPUTS_READY":"YES" if not missing else "NO"}
+    if audit_path:_write_json(audit_path,report)
+    if missing: raise Lot46Error("MISSING_INPUTS="+json.dumps(missing,sort_keys=True))
+    return report
+
+
+def validate_bundle_manifest(manifest: dict, archive_names: set[str]) -> None:
+    missing=sorted(set(manifest.get("files",{}))-archive_names)
+    if missing: raise Lot46Error(f"incomplete scientific bundle: {missing}")
 
 
 @dataclass(frozen=True)
@@ -199,6 +277,7 @@ def _canonical_reanalysis(row: dict, source: DatasetSource) -> dict:
     value = row.get("z_mean", row.get("value_target")) if value_available else None
     return {"fingerprint": fp, "state": state, "legal_mask": legal, "visit_counts": visits,
             "policy_target": target, "value_target_available": value_available, "z_mean": value,
+            "z_counts": row.get("z_counts"), "z_perspective": row.get("z_perspective"),
             "split_group": row.get("split_group") or row.get("source_game_id") or f"state:{fp}",
             "holdout": bool(row.get("holdout", False)), "target_source": source.target_source,
             "target_budget": row.get("simulations", row.get("mcts_budget", source.target_budget)),
@@ -249,7 +328,25 @@ def validate_rows(rows: Iterable[dict]) -> dict:
         if target is None or any(abs(a-b) > 1e-6 for a,b in zip(target,row["policy_target"])): raise Lot46Error("invalid Policy target")
         if row["value_target_available"]:
             z = row["z_mean"]
-            if z not in (-1, 0, 1, -1.0, 0.0, 1.0): raise Lot46Error(f"terminal z outside {{-1,0,1}}: {z}")
+            counts=row.get("z_counts")
+            if counts is not None:
+                if not isinstance(counts,dict) or set(counts)!={"win","draw","loss","unknown"}:
+                    raise Lot46Error(f"invalid aggregated terminal z_counts: {counts}")
+                if any(not isinstance(counts[k],int) or counts[k]<0 for k in counts):
+                    raise Lot46Error(f"invalid aggregated terminal counts: {counts}")
+                known=counts["win"]+counts["draw"]+counts["loss"]
+                if known<=0:
+                    raise Lot46Error(f"aggregated Value target contains no known terminal result: {counts}")
+                occurrences=row.get("source_occurrence_count")
+                if occurrences is not None and sum(counts.values())!=occurrences:
+                    raise Lot46Error(f"z_counts do not match source occurrences: {counts} != {occurrences}")
+                expected=(counts["win"]-counts["loss"])/known
+                if not math.isfinite(float(z)) or abs(float(z)-expected)>1e-9:
+                    raise Lot46Error(f"aggregated terminal z_mean inconsistent with z_counts: {z} != {expected}")
+                if row.get("z_perspective")!="player_to_move":
+                    raise Lot46Error(f"unsupported z perspective: {row.get('z_perspective')}")
+            elif z not in (-1, 0, 1, -1.0, 0.0, 1.0):
+                raise Lot46Error(f"non-aggregated terminal z outside {{-1,0,1}}: {z}")
             labeled += 1
         elif row["z_mean"] is not None: raise Lot46Error("missing Value target contains a numeric label")
         budgets[str(row["target_budget"])] = budgets.get(str(row["target_budget"]), 0) + 1
@@ -306,6 +403,7 @@ class DurableCheckpointStore:
         if sha256(remote_tmp)!=digest: remote_tmp.unlink(missing_ok=True); raise Lot46Error("durable checkpoint checksum mismatch")
         os.replace(remote_tmp,remote)
         manifest={"experiment_id":payload["experiment_id"],"step":step,"file":name,"sha256":digest,"size":remote.stat().st_size,
+                  "code_commit":payload.get("code_commit"),
                   "status":"COMMITTED","published_at":time.time()}
         _write_json(self.durable/f"checkpoint-{step:08d}.manifest.json",manifest)
         return {**manifest,"local_path":str(local),"durable_path":str(remote),"CHECKPOINT_DURABLE":"YES"}
@@ -334,14 +432,16 @@ def checkpoint_payload(*, config: ExperimentConfig, model, optimizer, scheduler,
 
 
 def resume_into(path: Path, *, config: ExperimentConfig, model, optimizer, scheduler, sampler,
-                dataset_fingerprint: str, split_fingerprint: str, initial_fingerprint: str) -> dict:
+                dataset_fingerprint: str, split_fingerprint: str, initial_fingerprint: str,
+                code_commit: str | None = None) -> dict:
     payload=torch.load(path,map_location="cpu",weights_only=False)
     checks={"checkpoint_type":payload.get("checkpoint_type")=="songo_lot46a_training",
         "experiment_id":payload.get("experiment_id")==config.experiment_id,
         "training_config":payload.get("training_config_fingerprint")==canonical_hash(config.payload()),
         "dataset":payload.get("dataset_fingerprint")==dataset_fingerprint,"split":payload.get("split_fingerprint")==split_fingerprint,
         "initial":payload.get("initial_checkpoint_fingerprint")==initial_fingerprint,
-        "architecture":payload.get("architecture_fingerprint")==architecture_fingerprint(model)}
+        "architecture":payload.get("architecture_fingerprint")==architecture_fingerprint(model),
+        "code_commit":payload.get("code_commit")==code_commit}
     if not all(checks.values()): raise Lot46Error(f"REFUSE_RESUME incompatible checkpoint: {checks}")
     model.load_state_dict(payload["model_state_dict"]); optimizer.load_state_dict(payload["optimizer_state_dict"])
     scheduler.load_state_dict(payload["scheduler_state_dict"]); sampler.load_state_dict(payload["sampler_state"]); restore_rng(payload["rng_state"])
@@ -349,7 +449,7 @@ def resume_into(path: Path, *, config: ExperimentConfig, model, optimizer, sched
 
 
 def evaluate(model, rows: list[dict], device: torch.device, batch_size: int=256) -> dict:
-    before=model_fingerprint(model); model.eval(); ce=top=kl=rank=sq=ae=n=labeled=0
+    before=model_fingerprint(model); model.eval(); ce=top=kl=rank=sq=ae=n=labeled=sign_correct=0
     with torch.no_grad():
         for start in range(0,len(rows),batch_size):
             b=collate(rows[start:start+batch_size],device); logits,value=model(b["graph"]); masked=mask_policy_logits(logits,b["legal_mask"])
@@ -359,12 +459,15 @@ def evaluate(model, rows: list[dict], device: torch.device, batch_size: int=256)
             for x,y,m in zip(p,target,b["legal_mask"]):
                 legal=torch.where(m)[0]; rank+=float(torch.equal(legal[torch.argsort(x[legal],descending=True)],legal[torch.argsort(y[legal],descending=True)]))
             vm=b["value_target_available"]
-            if vm.any(): d=value[vm]-b["value_target"][vm];sq+=float(d.square().sum());ae+=float(d.abs().sum());labeled+=int(vm.sum())
+            if vm.any():
+                d=value[vm]-b["value_target"][vm];sq+=float(d.square().sum());ae+=float(d.abs().sum());labeled+=int(vm.sum())
+                sign_correct+=int((torch.sign(value[vm])==torch.sign(b["value_target"][vm])).sum())
             n+=len(target)
     after=model_fingerprint(model)
     if before!=after: raise Lot46Error("validation modified model parameters")
     return {"positions":n,"policy_ce":ce/n,"policy_kl":kl/n,"top1_agreement":top/n,"exact_ranking_agreement":rank/n,
-            "value_mse":sq/labeled if labeled else None,"value_mae":ae/labeled if labeled else None,"value_labeled":labeled,
+            "value_mse":sq/labeled if labeled else None,"value_mae":ae/labeled if labeled else None,
+            "value_sign_accuracy":sign_correct/labeled if labeled else None,"value_labeled":labeled,
             "no_grad_parameter_invariance":True}
 
 
@@ -404,10 +507,13 @@ def step_model(model, optimizer, scheduler, rows: list[dict], config: Experiment
     nonfinite=any(p.grad is not None and not torch.isfinite(p.grad).all() for p in model.parameters())
     if nonfinite: raise Lot46Error("non-finite gradients")
     threshold=float(config.optimizer.get("gradient_clip",1.)); grad=float(torch.nn.utils.clip_grad_norm_([p for p in model.parameters() if p.requires_grad],threshold))
-    optimizer.step(); scheduler.step()
+    optimization_skipped=config.candidate_family=="VALUE_INDEPENDENT" and not bool(vm.any())
+    if not optimization_skipped:
+        optimizer.step(); scheduler.step()
     return {"loss_total":float(total.detach()),"loss_policy":float(policy.detach()),"loss_value":float(value_loss.detach()),
             "loss_correction":float(corr.detach()),"loss_preservation":float(preserve.detach()),"gradient_norm":grad,
-            "gradient_clip":threshold,"nonfinite_gradients":False,"learning_rate":optimizer.param_groups[0]["lr"]}
+            "gradient_clip":threshold,"nonfinite_gradients":False,"optimization_skipped_no_value_labels":optimization_skipped,
+            "value_labels_in_batch":int(vm.sum()),"learning_rate":optimizer.param_groups[0]["lr"]}
 
 
 def load_initial_model(config: ExperimentConfig, root: Path, device: torch.device):
@@ -433,10 +539,18 @@ def prepare_context(config: ExperimentConfig, root: Path) -> dict:
 
 def run_training(config: ExperimentConfig, root: Path, *, resume: bool=False, stop_after: int | None=None,
                  train_limit: int | None=None) -> dict:
-    ctx=prepare_context(config,root); output=ctx["output"]; output.mkdir(parents=True,exist_ok=True)
+    output=Path(config.output_directory);output=output if output.is_absolute() else root/output;output.mkdir(parents=True,exist_ok=True)
+    validate_scientific_inputs(config,root,stage="resume" if resume else "train",audit_path=output/"lot46a_input_dependency_audit.json")
+    ctx=prepare_context(config,root)
+    code_commit=git_commit(root)
     assignment=output/"experiment_assignment.json"
-    identity={"experiment_id":config.experiment_id,"output_directory":str(output.resolve()),"config_fingerprint":canonical_hash(config.payload())}
-    if assignment.is_file() and json.loads(assignment.read_text())!=identity: raise Lot46Error("experiment output is assigned to a different configuration")
+    identity={"experiment_id":config.experiment_id,"output_directory":str(output.resolve()),"config_fingerprint":canonical_hash(config.payload()),
+              "code_commit":code_commit}
+    if assignment.is_file():
+        assigned=json.loads(assignment.read_text())
+        if resume and assigned.get("code_commit") != code_commit:
+            raise Lot46Error(f"REFUSE_RESUME code_commit mismatch: initial={assigned.get('code_commit')} current={code_commit}")
+        if assigned!=identity: raise Lot46Error("experiment output is assigned to a different configuration")
     _write_json(assignment,identity)
     status_path=output/"status.json"
     if status_path.is_file() and not resume:
@@ -459,19 +573,26 @@ def run_training(config: ExperimentConfig, root: Path, *, resume: bool=False, st
         latest=store.latest(config.experiment_id)
         if latest is None: raise Lot46Error("no valid durable checkpoint to resume")
         payload=resume_into(latest[0],config=config,model=model,optimizer=optimizer,scheduler=scheduler,sampler=sampler,
-            dataset_fingerprint=ctx["dataset_fingerprint"],split_fingerprint=ctx["split_fingerprint"],initial_fingerprint=initial_fp)
+            dataset_fingerprint=ctx["dataset_fingerprint"],split_fingerprint=ctx["split_fingerprint"],initial_fingerprint=initial_fp,
+            code_commit=code_commit)
         step=int(payload["global_step"]); resumed=True
     history=output/"training_history.jsonl"; started=time.perf_counter(); checkpoint_manifest=[]; limit=min(config.max_steps,stop_after or config.max_steps)
+    starting_step=step; sampled_fingerprints=set(); source_sample_counts={s.target_source:0 for s in config.dataset_sources}
     model.train(); before_other=[]
     fixed=ctx["splits"]["validation"][:min(32,len(ctx["splits"]["validation"]))]
     with torch.no_grad():
         b=collate(fixed,device); p0,v0=model(b["graph"]); before_other=(p0.detach().cpu(),v0.detach().cpu())
     while step<limit:
         indices=sampler.next(); batch=[train_rows[i] for i in indices]
+        sampled_fingerprints.update(x["fingerprint"] for x in batch)
+        for item in batch: source_sample_counts[item["target_source"]]=source_sample_counts.get(item["target_source"],0)+1
         sr=[strategic[(step*32+i)%len(strategic)] for i in range(min(32,len(strategic)))] if strategic else None
         metrics=step_model(model,optimizer,scheduler,batch,config,device,sr); step+=1
+        batch_source_counts={}
+        for item in batch: batch_source_counts[item["target_source"]]=batch_source_counts.get(item["target_source"],0)+1
         row={"experiment_id":config.experiment_id,"step":step,"epoch":sampler.epoch,"candidate_family":config.candidate_family,
-             **metrics,"elapsed_seconds":time.perf_counter()-started}
+             **metrics,"batch_source_counts":batch_source_counts,"batch_fingerprints":[x["fingerprint"] for x in batch],
+             "elapsed_seconds":time.perf_counter()-started}
         with history.open("a") as stream: stream.write(json.dumps(row,sort_keys=True)+"\n")
         if step%config.validation_interval==0 or step==limit: _write_json(output/"validation_latest.json",evaluate(model,ctx["splits"]["validation"],device))
         if step%config.checkpoint_interval==0 or step==limit:
@@ -482,15 +603,20 @@ def run_training(config: ExperimentConfig, root: Path, *, resume: bool=False, st
         b=collate(fixed,device); p1,v1=model(b["graph"])
     other_drift=float((v1.cpu()-before_other[1]).abs().max()) if config.candidate_family!="VALUE_INDEPENDENT" else float((p1.cpu()-before_other[0]).abs().max())
     status="COMPLETED" if step==config.max_steps else "RESUMABLE"
-    result={"experiment_id":config.experiment_id,"status":status,"global_step":step,"resumed":resumed,"device":str(device),
+    elapsed=time.perf_counter()-started; executed=step-starting_step
+    result={"experiment_id":config.experiment_id,"status":status,"global_step":step,"steps_executed_this_invocation":executed,"resumed":resumed,"device":str(device),
+        "code_commit":code_commit,
         "trainable_parameters":trainable,"training_mode":config.training_mode,"other_head_max_output_drift":other_drift,
         "head_invariance_required":config.training_mode=="HEAD_ONLY","head_invariance_pass":other_drift==0 if config.training_mode=="HEAD_ONLY" else "NOT_APPLICABLE",
         "dataset_fingerprint":ctx["dataset_fingerprint"],"split_fingerprint":ctx["split_fingerprint"],
         "validation":evaluate(model,ctx["splits"]["validation"],device),"checkpoint_durable":bool(store.latest(config.experiment_id)),
-        "samples_per_second":step*config.batch_size/max(time.perf_counter()-started,1e-9),"steps_per_second":step/max(time.perf_counter()-started,1e-9)}
+        "samples_seen_this_invocation":executed*config.batch_size,"unique_states_seen_this_invocation":len(sampled_fingerprints),
+        "source_sample_counts_this_invocation":source_sample_counts,
+        "samples_per_second":executed*config.batch_size/max(elapsed,1e-9),"steps_per_second":executed/max(elapsed,1e-9)}
     _write_json(status_path,result)
     latest=store.latest(config.experiment_id)
     _write_json(output/"candidate_registry.json",{"candidates":[{"candidate_id":config.experiment_id,"family":config.candidate_family,
+        "code_commit":code_commit,
         "initial_checkpoint":config.initial_checkpoint,"training_config":config.payload(),"dataset_sources":[asdict(x) for x in config.dataset_sources],
         "split_fingerprint":ctx["split_fingerprint"],"checkpoint_paths":[str(latest[0])] if latest else [],
         "training_status":status,"validation_status":"COMPLETED"}]})
