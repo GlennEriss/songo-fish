@@ -12,6 +12,7 @@ import math
 import os
 import random
 import shutil
+import statistics
 import subprocess
 import time
 from dataclasses import asdict, dataclass, field
@@ -28,7 +29,8 @@ from songo_ai.model.correct_preserve import classify_pairs, correction_loss, pre
 from songo_ai.model.strategic_ranking import build_legal_pairs
 from songo_ai.training.lot46 import Lot46Error, collate, group_aware_split, reconstruct_policy_target, sha256
 
-FAMILIES = {"CONTROL", "DEEP_POLICY", "DEEP_POLICY_REPLAY", "VALUE_INDEPENDENT"}
+FAMILIES = {"CONTROL", "DEEP_POLICY", "DEEP_POLICY_REPLAY", "VALUE_INDEPENDENT",
+            "DEEP_POLICY_UNCONSTRAINED", "DEEP_POLICY_REPLAY_RELABELED"}
 MODES = {"HEAD_ONLY", "SHARED_TRUNK_TRAINABLE"}
 STATUSES = {"NOT_STARTED", "PREFLIGHT_PASSED", "RUNNING", "INTERRUPTED", "RESUMABLE", "COMPLETED", "FAILED", "INVALID"}
 QDIAG256_SHA256 = "e854371afcc162b17e323a062ef0cde96bd7e1041ebe8b794028042b5c0abecc"
@@ -87,7 +89,7 @@ def validate_scientific_inputs(config: "ExperimentConfig", root: Path, *, stage:
         path=Path(source.path);path=path if path.is_absolute() else root/path
         dependencies.append(_dependency(f"dataset:{source.target_source}",path,
             "Lot45" if source.kind=="lot45" else "historical D_RL",["prepare_context","load_sources"],stage))
-    if full and config.candidate_family!="VALUE_INDEPENDENT":
+    if full and config.candidate_family in {"CONTROL","DEEP_POLICY","DEEP_POLICY_REPLAY"}:
         battery=Path(config.objective.get("strategic_battery",""));battery=battery if battery.is_absolute() else root/battery
         dep=_dependency("strategic_preservation_battery",battery,"Lot25 D_STRATEGIC_SAMPLE",
                         ["prepare_strategic_battery","Correct-and-Preserve"],stage,QDIAG256_SHA256)
@@ -181,14 +183,24 @@ class ExperimentConfig:
         if self.device not in {"cpu", "cuda", "auto"}: raise Lot46Error("device must be cpu/cuda/auto")
         if self.candidate_family == "CONTROL" and any(s.kind == "lot45" for s in self.dataset_sources):
             raise Lot46Error("CONTROL must not use Lot45 deep targets")
-        if self.candidate_family in {"DEEP_POLICY", "DEEP_POLICY_REPLAY"} and not any(s.kind == "lot45" for s in self.dataset_sources):
+        deep_families={"DEEP_POLICY","DEEP_POLICY_REPLAY","DEEP_POLICY_UNCONSTRAINED","DEEP_POLICY_REPLAY_RELABELED"}
+        if self.candidate_family in deep_families and not any(s.kind == "lot45" for s in self.dataset_sources):
             raise Lot46Error("deep Policy candidates require Lot45")
-        if self.candidate_family == "DEEP_POLICY" and len(self.dataset_sources) != 1:
+        if self.candidate_family in {"DEEP_POLICY","DEEP_POLICY_UNCONSTRAINED"} and len(self.dataset_sources) != 1:
             raise Lot46Error("DEEP_POLICY is the direct Lot45-only intervention")
-        if self.candidate_family == "DEEP_POLICY_REPLAY" and len(self.dataset_sources) < 2:
+        if self.candidate_family in {"DEEP_POLICY_REPLAY","DEEP_POLICY_REPLAY_RELABELED"} and len(self.dataset_sources) < 2:
             raise Lot46Error("DEEP_POLICY_REPLAY requires a real replay source")
-        if self.objective.get("name") != "CORRECT_AND_PRESERVE" and self.candidate_family != "VALUE_INDEPENDENT":
-            raise Lot46Error("Policy candidates require CORRECT_AND_PRESERVE")
+        if self.candidate_family in {"CONTROL","DEEP_POLICY","DEEP_POLICY_REPLAY"} and self.objective.get("name") != "CORRECT_AND_PRESERVE":
+            raise Lot46Error("historical Policy candidates require CORRECT_AND_PRESERVE")
+        if self.candidate_family in {"DEEP_POLICY_UNCONSTRAINED","DEEP_POLICY_REPLAY_RELABELED"}:
+            if self.objective.get("name") != "DEEP_POLICY_CE_ONLY":
+                raise Lot46Error("generational Policy candidates require DEEP_POLICY_CE_ONLY")
+            forbidden={"lambda_correction","lambda_preservation","rho","strategic_battery","teacher_checkpoint","minimax_labels"}
+            if forbidden.intersection(self.objective):
+                raise Lot46Error("unconstrained Policy objective contains legacy supervision")
+            allowed={"LOT45_MCTS32768","AUTONOMOUS_MCTS32768_RELABELED"}
+            if any(s.target_source not in allowed for s in self.dataset_sources):
+                raise Lot46Error("unconstrained Policy requires admissible autonomous deep targets")
         if self.max_steps > 100 and not self.confirm_full_training:
             raise Lot46Error("max_steps > 100 requires confirm_full_training=true")
 
@@ -476,7 +488,7 @@ def resume_into(path: Path, *, config: ExperimentConfig, model, optimizer, sched
 
 
 def evaluate(model, rows: list[dict], device: torch.device, batch_size: int=256) -> dict:
-    before=model_fingerprint(model); model.eval(); ce=top=kl=rank=sq=ae=n=labeled=sign_correct=0
+    before=model_fingerprint(model); model.eval(); ce=top=kl=rank=sq=ae=n=labeled=sign_correct=0; value_predictions=[]
     with torch.no_grad():
         for start in range(0,len(rows),batch_size):
             b=collate(rows[start:start+batch_size],device); logits,value=model(b["graph"]); masked=mask_policy_logits(logits,b["legal_mask"])
@@ -489,12 +501,31 @@ def evaluate(model, rows: list[dict], device: torch.device, batch_size: int=256)
             if vm.any():
                 d=value[vm]-b["value_target"][vm];sq+=float(d.square().sum());ae+=float(d.abs().sum());labeled+=int(vm.sum())
                 sign_correct+=int((torch.sign(value[vm])==torch.sign(b["value_target"][vm])).sum())
+                for local_index in torch.where(vm)[0].tolist():
+                    row=rows[start+local_index]; stones=sum(row["state"]["board"])
+                    phase="OPENING" if stones>=42 else "MIDDLE" if stones>=20 else "ENDGAME"
+                    value_predictions.append({"fingerprint":row.get("fingerprint"),"prediction":float(value[local_index]),
+                        "terminal_z":float(b["value_target"][local_index]),"phase":phase})
             n+=len(target)
     after=model_fingerprint(model)
     if before!=after: raise Lot46Error("validation modified model parameters")
+    calibration=[]
+    for low in (-1.0,-.5,0.0,.5):
+        upper=1.0 if low==.5 else low+.5; bucket=[x for x in value_predictions if low<=x["prediction"]<=upper]
+        if bucket: calibration.append({"lower":low,"upper":upper,"count":len(bucket),
+            "mean_prediction":statistics.fmean(x["prediction"] for x in bucket),"mean_terminal_z":statistics.fmean(x["terminal_z"] for x in bucket)})
+    def grouped(field):
+        result={}
+        for key in sorted({x[field] for x in value_predictions},key=str):
+            group=[x for x in value_predictions if x[field]==key]
+            result[str(key)]={"count":len(group),"mse":statistics.fmean((x["prediction"]-x["terminal_z"])**2 for x in group),
+                "mae":statistics.fmean(abs(x["prediction"]-x["terminal_z"]) for x in group)}
+        return result
     return {"positions":n,"policy_ce":ce/n,"policy_kl":kl/n,"top1_agreement":top/n,"exact_ranking_agreement":rank/n,
             "value_mse":sq/labeled if labeled else None,"value_mae":ae/labeled if labeled else None,
             "value_sign_accuracy":sign_correct/labeled if labeled else None,"value_labeled":labeled,
+            "value_predictions":value_predictions,"value_calibration":calibration,
+            "value_errors_by_phase":grouped("phase"),"value_errors_by_terminal_result":grouped("terminal_z"),
             "no_grad_parameter_invariance":True}
 
 
@@ -525,11 +556,13 @@ def step_model(model, optimizer, scheduler, rows: list[dict], config: Experiment
     model.train(); b=collate(rows,device); logits,value=model(b["graph"])
     policy=-(b["policy_target"]*torch.log_softmax(mask_policy_logits(logits,b["legal_mask"]),-1)).sum(-1).mean()
     vm=b["value_target_available"]; value_loss=(value[vm]-b["value_target"][vm]).square().mean() if vm.any() else value.sum()*0
-    if config.candidate_family != "VALUE_INDEPENDENT":
+    unconstrained = config.candidate_family in {"DEEP_POLICY_UNCONSTRAINED", "DEEP_POLICY_REPLAY_RELABELED"}
+    if config.candidate_family != "VALUE_INDEPENDENT" and not unconstrained:
         if not strategic_rows: raise Lot46Error("Correct-and-Preserve requires a non-empty strategic battery")
         corr,preserve=_strategic_losses(model,strategic_rows,device,float(config.objective.get("rho",.5)))
     else: corr=logits.sum()*0; preserve=logits.sum()*0
-    total=value_loss if config.candidate_family=="VALUE_INDEPENDENT" else policy+float(config.objective.get("lambda_correction",.1))*corr+float(config.objective.get("lambda_preservation",1.))*preserve
+    total=(value_loss if config.candidate_family=="VALUE_INDEPENDENT" else policy if unconstrained else
+           policy+float(config.objective.get("lambda_correction",.1))*corr+float(config.objective.get("lambda_preservation",1.))*preserve)
     optimizer.zero_grad(set_to_none=True); total.backward()
     nonfinite=any(p.grad is not None and not torch.isfinite(p.grad).all() for p in model.parameters())
     if nonfinite: raise Lot46Error("non-finite gradients")
