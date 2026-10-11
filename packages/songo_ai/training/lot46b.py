@@ -46,13 +46,14 @@ PILOT_FAMILIES = {
 }
 PILOT_IDS = {
     "CONTROL": "LOT46B_PILOT_CONTROL_001",
-    "DEEP_POLICY": "LOT46B_PILOT_DEEP_POLICY_001",
+    "DEEP_POLICY": "LOT46B_PILOT_DEEP_POLICY_002",
     "DEEP_POLICY_REPLAY": "LOT46B_PILOT_DEEP_REPLAY_001",
     "VALUE_INDEPENDENT": "LOT46B_PILOT_VALUE_001",
 }
 LOT46A_EXPORT_SHA256 = "01b9e1f2e0c0b7a559fceaec74bdd30347786b4fcb5860bae5b0acbae6c96083"
 LOT46A_TRAINING_COMMIT = "b9417555e555ac936580f46c33e640cdcc60d51d"
 LOT46A_FINALIZATION_COMMIT = "35d12ae5f14517f5b472513c0929fd09ebafa9ca"
+HISTORICAL_DEEP_POLICY_ID = "LOT46B_PILOT_DEEP_POLICY_001"
 
 
 def _json(path: Path) -> dict:
@@ -237,6 +238,11 @@ def _assert_pilot_contract(config: ExperimentConfig) -> None:
         raise Lot46Error("all Lot46B-B1 pilots must initialize from POOL_G4R")
     if config.seed != 20264621:
         raise Lot46Error("comparative pilot seed is frozen at 20264621")
+    output = Path(config.output_directory)
+    if output.name != config.experiment_id:
+        raise Lot46Error("pilot output directory must be exclusive to its experiment_id")
+    if config.experiment_id == HISTORICAL_DEEP_POLICY_ID or output.name == HISTORICAL_DEEP_POLICY_ID:
+        raise Lot46Error("historical DEEP_POLICY_001 is immutable and cannot be reused")
 
 
 def pilot_prepare(config_path: Path, root: Path, lot46a_output: Path, export_bundle: Path) -> dict:

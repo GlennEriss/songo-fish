@@ -10,6 +10,7 @@ import torch
 from songo_ai.training.lot46 import Lot46Error, reconstruct_policy_target
 from songo_ai.training.lot46a import ExperimentConfig, step_model
 from songo_ai.training.lot46b import (
+    HISTORICAL_DEEP_POLICY_ID,
     LOT46A_FINALIZATION_COMMIT,
     LOT46A_TRAINING_COMMIT,
     PILOT_IDS,
@@ -28,6 +29,8 @@ def test_four_pilot_configurations_are_frozen_comparable_and_isolated():
     assert len({x.output_directory for x in configs}) == 4
     assert {x.seed for x in configs} == {20264621}
     assert {x.max_steps for x in configs} == {100}
+    assert HISTORICAL_DEEP_POLICY_ID not in {x.experiment_id for x in configs}
+    assert PILOT_IDS["DEEP_POLICY"] == "LOT46B_PILOT_DEEP_POLICY_002"
     assert {x.batch_size for x in configs} == {32}
     assert {x.validation_interval for x in configs} == {25}
     assert {x.checkpoint_interval for x in configs} == {25}
@@ -47,6 +50,18 @@ def test_pilot_contract_rejects_main_training_cpu_wrong_seed_and_wrong_identity(
         _assert_pilot_contract(replace(config, seed=1))
     with pytest.raises(Lot46Error, match="id mismatch"):
         _assert_pilot_contract(replace(config, experiment_id="LOT46B_PILOT_WRONG"))
+
+
+def test_historical_deep_policy_output_is_never_an_active_write_target(tmp_path):
+    config = ExperimentConfig.load(ROOT / "configs/lot46b/pilot_deep_policy.json")
+    historical = tmp_path / HISTORICAL_DEEP_POLICY_ID
+    historical.mkdir(); marker = historical / "lot46b_pilot_preflight.json"; marker.write_text("historical")
+    with pytest.raises(Lot46Error, match="id mismatch|immutable"):
+        _assert_pilot_contract(replace(config, experiment_id=HISTORICAL_DEEP_POLICY_ID,
+            output_directory=str(historical)))
+    assert marker.read_text() == "historical"
+    _assert_pilot_contract(config)
+    assert Path(config.output_directory).name == "LOT46B_PILOT_DEEP_POLICY_002"
 
 
 def test_policy_reconstruction_is_a_distribution_and_masks_illegal_actions():
