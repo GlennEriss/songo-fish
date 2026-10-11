@@ -314,6 +314,24 @@ def pilot_prepare(config_path: Path, root: Path, lot46a_output: Path, export_bun
     return report
 
 
+def stage_a_prepare(config_path: Path, root: Path, lot46a_output: Path, export_bundle: Path) -> dict:
+    """Preflight Stage A plus évaluation immuable du point de départ G4R."""
+    report = pilot_prepare(config_path, root, lot46a_output, export_bundle)
+    config = ExperimentConfig.load(config_path)
+    if config.experiment_id != STAGE_A_IDS.get(config.candidate_family):
+        raise Lot46Error("stage-a prepare requires a frozen B2 Stage A experiment")
+    ctx = prepare_context(config, root)
+    device = torch.device("cuda")
+    initial_model, _ = load_initial_model(config, root, device)
+    baseline = {"step": 0, "experiment_id": config.experiment_id,
+        "code_commit": git_commit(root), **evaluate(initial_model, ctx["splits"]["validation"], device)}
+    _write_json(ctx["output"] / "validation-00000000.json", baseline)
+    report["baseline_validation"] = baseline
+    report["validation_schedule"] = [0, 250, 500, 750, 1000]
+    _write_json(ctx["output"] / "lot46b_pilot_preflight.json", report)
+    return report
+
+
 def _latest_model(config: ExperimentConfig, root: Path, ctx: dict, device: torch.device):
     model, initial_fp = load_initial_model(config, root, device)
     configure_trainable(model, config.candidate_family, config.training_mode)

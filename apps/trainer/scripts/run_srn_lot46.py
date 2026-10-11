@@ -25,7 +25,7 @@ from songo_ai.training.lot46a import (DurableCheckpointStore, ExperimentConfig, 
     architecture_fingerprint, evaluate, load_initial_model, make_optimizer_scheduler, prepare_context, resume_into,
     run_training, validate_scientific_inputs, WeightedStatefulSampler, configure_trainable)
 from songo_ai.training.lot46b import (pilot_export, pilot_prepare, pilot_report,
-    pilot_resume_test, pilot_run, pilot_status, pilot_validate, stage_a_export, stage_a_report)
+    pilot_resume_test, pilot_run, pilot_status, pilot_validate, stage_a_export, stage_a_prepare, stage_a_report)
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
 ROOT = REPOSITORY_ROOT / "data/experiments/lot46_g5_training"
@@ -517,7 +517,8 @@ def main() -> None:
             if not a.config: raise Lot46Error(f"--stage {a.stage} requires --config")
             if a.stage in {"pilot-prepare", "stage-a-prepare"}:
                 if not a.lot46a_output or not a.lot46a_export: raise Lot46Error("pilot-prepare requires --lot46a-output and --lot46a-export")
-                result=pilot_prepare(a.config,REPOSITORY_ROOT,a.lot46a_output,a.lot46a_export)
+                prepare_fn=stage_a_prepare if a.stage == "stage-a-prepare" else pilot_prepare
+                result=prepare_fn(a.config,REPOSITORY_ROOT,a.lot46a_output,a.lot46a_export)
             elif a.stage in {"pilot-run", "stage-a-run"}: result=pilot_run(a.config,REPOSITORY_ROOT,stop_after=a.stop_after)
             elif a.stage in {"pilot-resume", "stage-a-resume"}: result=pilot_run(a.config,REPOSITORY_ROOT,resume=True)
             elif a.stage in {"pilot-validate", "stage-a-validate"}: result=pilot_validate(a.config,REPOSITORY_ROOT)

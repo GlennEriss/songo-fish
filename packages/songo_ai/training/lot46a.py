@@ -625,7 +625,11 @@ def run_training(config: ExperimentConfig, root: Path, *, resume: bool=False, st
         if step%config.validation_interval==0 or step==limit:
             if device.type == "cuda": torch.cuda.synchronize(device)
             validation_started=time.perf_counter()
-            _write_json(output/"validation_latest.json",evaluate(model,ctx["splits"]["validation"],device))
+            validation_payload=evaluate(model,ctx["splits"]["validation"],device)
+            validation_payload={"step":step,"experiment_id":config.experiment_id,
+                "code_commit":code_commit,**validation_payload}
+            _write_json(output/"validation_latest.json",validation_payload)
+            _write_json(output/f"validation-{step:08d}.json",validation_payload)
             if device.type == "cuda": torch.cuda.synchronize(device)
             validation_seconds+=time.perf_counter()-validation_started
         if step%config.checkpoint_interval==0 or step==limit:
