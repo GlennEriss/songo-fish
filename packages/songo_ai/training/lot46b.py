@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import json
 import math
+import re
 import tarfile
 import time
 import traceback
@@ -64,34 +65,149 @@ def _write_json(path: Path, payload: dict) -> None:
     tmp.replace(path)
 
 
-def audit_lot46a_prerequisites(lot46a_output: Path, export_bundle: Path) -> dict:
-    """Validate authoritative Lot46A evidence instead of trusting prompt text."""
-    readiness = _json(lot46a_output / "lot46a_readiness_report.json")
-    integrity = _json(lot46a_output / "lot46a_checkpoint_integrity.json")
-    cuda = _json(lot46a_output / "lot46a_cuda_smoke.json")
-    engineering = _json(lot46a_output / "lot46a_engineering_report.json")
+def _optional_json(path: Path) -> dict | None:
+    try:
+        value = json.loads(path.read_text()) if path.is_file() else None
+        return value if isinstance(value, dict) else None
+    except (OSError, json.JSONDecodeError):
+        return None
+
+
+def _valid_commit(value: object) -> bool:
+    return isinstance(value, str) and re.fullmatch(r"[0-9a-f]{40}", value) is not None
+
+
+def _sidecar_digest(path: Path, bundle: Path) -> tuple[str | None, str | None]:
+    if not path.is_file():
+        return None, "sidecar absent"
+    try:
+        fields = path.read_text().strip().split()
+    except OSError as exc:
+        return None, f"sidecar unreadable: {type(exc).__name__}: {exc}"
+    if not fields or re.fullmatch(r"[0-9a-fA-F]{64}", fields[0]) is None:
+        return None, "sidecar invalide: SHA256 absent ou mal formé"
+    if len(fields) > 1 and Path(fields[-1].lstrip("*")).name != bundle.name:
+        return None, f"sidecar invalide: nom {fields[-1]!r} différent de {bundle.name!r}"
+    return fields[0].lower(), None
+
+
+def _archive_json(archive: tarfile.TarFile, basename: str) -> dict | None:
+    matches = [member for member in archive.getmembers() if Path(member.name).name == basename and member.isfile()]
+    if not matches:
+        return None
+    depth = min(len(Path(member.name).parts) for member in matches)
+    matches = [member for member in matches if len(Path(member.name).parts) == depth]
+    if len(matches) != 1:
+        return None
+    stream = archive.extractfile(matches[0])
+    if stream is None:
+        return None
+    try:
+        value = json.loads(stream.read().decode("utf-8"))
+        return value if isinstance(value, dict) else None
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        return None
+
+
+def audit_lot46a_prerequisites(lot46a_output: Path, export_bundle: Path, *,
+                               diagnostic_path: Path | None = None,
+                               current_code_commit: str | None = None) -> dict:
+    """Validate the complete Lot46A provenance chain and fail closed with diagnostics."""
+    readiness = _optional_json(lot46a_output / "lot46a_readiness_report.json") or {}
+    integrity = _optional_json(lot46a_output / "lot46a_checkpoint_integrity.json") or {}
+    cuda = _optional_json(lot46a_output / "lot46a_cuda_smoke.json") or {}
+    engineering = _optional_json(lot46a_output / "lot46a_engineering_report.json") or {}
+    assignment = _optional_json(lot46a_output / "experiment_assignment.json") or {}
+    status = _optional_json(lot46a_output / "status.json") or {}
+    latest = integrity.get("latest") if isinstance(integrity.get("latest"), dict) else {}
+    manifest_name = str(latest.get("file", "")).replace(".pt", ".manifest.json")
+    checkpoint_manifest = _optional_json(lot46a_output / "durable_checkpoints" / manifest_name) if manifest_name else None
+    checkpoint_manifest = checkpoint_manifest or {}
+    checkpoint_path = lot46a_output / "durable_checkpoints" / str(latest.get("file", ""))
+    checkpoint_actual_sha = sha256(checkpoint_path) if checkpoint_path.is_file() else None
+
     actual_sha = sha256(export_bundle) if export_bundle.is_file() else None
+    sidecar_path = Path(str(export_bundle) + ".sha256")
+    sidecar_sha, sidecar_error = _sidecar_digest(sidecar_path, export_bundle)
+    archive_reports: dict[str, dict | None] = {}
+    archive_error = None
+    if export_bundle.is_file():
+        try:
+            with tarfile.open(export_bundle, "r:gz") as archive:
+                for name in ("experiment_assignment.json", "status.json", "lot46a_checkpoint_integrity.json",
+                             "lot46a_engineering_report.json", "lot46a_readiness_report.json"):
+                    archive_reports[name] = _archive_json(archive, name)
+        except (OSError, tarfile.TarError) as exc:
+            archive_error = f"{type(exc).__name__}: {exc}"
+
+    audit = integrity.get("final_checkpoint_audit") if isinstance(integrity.get("final_checkpoint_audit"), dict) else {}
+    training_sources = {
+        "experiment_assignment.json": assignment.get("code_commit"),
+        "status.json": status.get("code_commit"),
+        "checkpoint_manifest": checkpoint_manifest.get("code_commit"),
+        "checkpoint_audit": audit.get("training_code_commit"),
+        "engineering_report": engineering.get("training_code_commit"),
+    }
+    finalization_sources = {
+        "checkpoint_audit": audit.get("finalization_code_commit"),
+        "engineering_report": engineering.get("finalization_code_commit"),
+    }
+    training_values = {value for value in training_sources.values() if _valid_commit(value)}
+    finalization_values = {value for value in finalization_sources.values() if _valid_commit(value)}
+    training_actual = next(iter(training_values)) if len(training_values) == 1 else None
+    finalization_actual = next(iter(finalization_values)) if len(finalization_values) == 1 else None
+    experiment_id = assignment.get("experiment_id") or status.get("experiment_id") or latest.get("experiment_id")
+    identity_consistent = bool(experiment_id and all(value == experiment_id for value in (
+        assignment.get("experiment_id"), status.get("experiment_id"), latest.get("experiment_id"))))
+    archive_consistent = bool(archive_reports) and all(
+        archive_reports.get(name) == external for name, external in (
+            ("experiment_assignment.json", assignment), ("status.json", status),
+            ("lot46a_checkpoint_integrity.json", integrity), ("lot46a_engineering_report.json", engineering),
+            ("lot46a_readiness_report.json", readiness)))
     checks = {
         "LOT46A_VALID": readiness.get("LOT46A_VALID") == "YES",
         "LOT46B_TRAINING_READY": readiness.get("LOT46B_TRAINING_READY") == "YES",
-        "CUDA_TRAINING_SMOKE_PASS": readiness.get("CUDA_TRAINING_SMOKE_PASS", {}).get("value") == "YES"
-            and cuda.get("status") == "PASS",
-        "CHECKPOINT_INTEGRITY": integrity.get("status") == "PASS",
-        "EXPORT_SHA256": actual_sha == LOT46A_EXPORT_SHA256,
-        "TRAINING_COMMIT": engineering.get("training_code_commit") == LOT46A_TRAINING_COMMIT,
-        "FINALIZATION_COMMIT": engineering.get("finalization_code_commit") == LOT46A_FINALIZATION_COMMIT,
+        "CUDA_TRAINING_SMOKE_PASS": readiness.get("CUDA_TRAINING_SMOKE_PASS", {}).get("value") == "YES" and cuda.get("status") == "PASS",
+        "CHECKPOINT_INTEGRITY": integrity.get("status") == "PASS" and bool(latest)
+            and checkpoint_actual_sha == latest.get("sha256") == checkpoint_manifest.get("sha256"),
+        "EXPORT_SHA256": actual_sha == sidecar_sha == LOT46A_EXPORT_SHA256,
+        "ARCHIVE_PROVENANCE": archive_error is None and archive_consistent,
+        "EXPERIMENT_IDENTITY": identity_consistent,
+        "TRAINING_COMMIT": training_actual == LOT46A_TRAINING_COMMIT
+            and all(_valid_commit(value) for value in training_sources.values()),
+        "FINALIZATION_COMMIT": finalization_actual == LOT46A_FINALIZATION_COMMIT
+            and all(_valid_commit(value) for value in finalization_sources.values()),
+        "CURRENT_LOT46B_COMMIT": _valid_commit(current_code_commit),
     }
+    failed = [name for name, passed in checks.items() if not passed]
+    root_causes = []
+    if not export_bundle.is_file(): root_causes.append("archive Lot46A absente")
+    elif actual_sha != LOT46A_EXPORT_SHA256: root_causes.append("empreinte de l'archive différente de la référence historique")
+    if sidecar_error: root_causes.append(sidecar_error)
+    elif sidecar_sha != actual_sha: root_causes.append("sidecar SHA256 différent des octets de l'archive")
+    if archive_error: root_causes.append(f"archive illisible: {archive_error}")
+    elif not archive_consistent: root_causes.append("rapports dans l'archive différents des rapports autoritatifs externes")
+    if training_actual != LOT46A_TRAINING_COMMIT: root_causes.append("commit d'entraînement absent, contradictoire ou différent de la référence historique")
+    if finalization_actual != LOT46A_FINALIZATION_COMMIT: root_causes.append("commit de finalisation absent, contradictoire ou différent de la référence historique")
     report = {
-        "status": "PASS" if all(checks.values()) else "FAIL",
-        "checks": checks,
-        "lot46a_output": str(lot46a_output),
-        "export_bundle": str(export_bundle),
-        "export_sha256_expected": LOT46A_EXPORT_SHA256,
-        "export_sha256_actual": actual_sha,
-        "checked_at": time.time(),
+        "status": "PASS" if not failed else "FAIL", "experiment_id": experiment_id,
+        "bundle_path": str(export_bundle), "bundle_sha256_actual": actual_sha,
+        "bundle_sha256_expected": LOT46A_EXPORT_SHA256, "bundle_sha256_sidecar": sidecar_sha,
+        "sidecar_path": str(sidecar_path), "sidecar_error": sidecar_error,
+        "training_commit_actual": training_actual, "training_commit_expected": LOT46A_TRAINING_COMMIT,
+        "training_commit_sources": training_sources,
+        "finalization_commit_actual": finalization_actual, "finalization_commit_expected": LOT46A_FINALIZATION_COMMIT,
+        "finalization_commit_sources": finalization_sources,
+        "current_lot46b_code_commit": current_code_commit,
+        "checkpoint_path": str(checkpoint_path), "checkpoint_sha256_actual": checkpoint_actual_sha,
+        "checkpoint_sha256_manifest": checkpoint_manifest.get("sha256"),
+        "archive_reports_present": {name: value is not None for name, value in archive_reports.items()},
+        "checks": checks, "failed_checks": failed, "root_causes": root_causes, "checked_at": time.time(),
     }
-    if report["status"] != "PASS":
-        raise Lot46Error(f"LOT46A_PREREQUISITE_FAILURE: {checks}")
+    if diagnostic_path is not None:
+        _write_json(diagnostic_path, report)
+    if failed:
+        raise Lot46Error(f"LOT46A_PREREQUISITE_FAILURE diagnostic={diagnostic_path}: {checks}")
     return report
 
 
@@ -114,7 +230,9 @@ def _assert_pilot_contract(config: ExperimentConfig) -> None:
 def pilot_prepare(config_path: Path, root: Path, lot46a_output: Path, export_bundle: Path) -> dict:
     config = ExperimentConfig.load(config_path)
     _assert_pilot_contract(config)
-    prerequisites = audit_lot46a_prerequisites(lot46a_output, export_bundle)
+    diagnostic = lot46a_output.parent.parent / "lot46b" / "lot46b_prerequisite_diagnostic.json"
+    prerequisites = audit_lot46a_prerequisites(lot46a_output, export_bundle,
+        diagnostic_path=diagnostic, current_code_commit=git_commit(root))
     dependency = validate_scientific_inputs(config, root, stage="train")
     ctx = prepare_context(config, root)
     train = ctx["splits"]["train"]

@@ -1,5 +1,6 @@
 import hashlib
 import json
+import tarfile
 from dataclasses import replace
 from pathlib import Path
 
@@ -80,20 +81,80 @@ def test_value_masking_empty_batch_is_zero_finite_and_has_zero_gradient(monkeypa
     assert result["nonfinite_gradients"] is False and model.weight.item() == pytest.approx(1.0)
 
 
-def test_lot46a_prerequisites_read_real_files_and_fail_closed(tmp_path, monkeypatch):
-    output = tmp_path / "lot46a"; output.mkdir(); bundle = tmp_path / "lot46a.tar.gz"; bundle.write_bytes(b"authoritative")
+def _provenance_fixture(tmp_path, monkeypatch):
+    output = tmp_path / "lot46a"; durable = output / "durable_checkpoints"; durable.mkdir(parents=True)
+    checkpoint = durable / "checkpoint-00000040.pt"; checkpoint.write_bytes(b"checkpoint")
+    checkpoint_sha = hashlib.sha256(checkpoint.read_bytes()).hexdigest()
+    assignment = {"experiment_id":"LOT46A_SMOKE_DEEP_001","code_commit":LOT46A_TRAINING_COMMIT}
+    status = {"experiment_id":"LOT46A_SMOKE_DEEP_001","code_commit":LOT46A_TRAINING_COMMIT,"global_step":40}
+    manifest = {"experiment_id":"LOT46A_SMOKE_DEEP_001","file":checkpoint.name,"step":40,"status":"COMMITTED",
+        "sha256":checkpoint_sha,"code_commit":LOT46A_TRAINING_COMMIT}
+    integrity = {"status":"PASS","latest":manifest,"final_checkpoint_audit":{"training_code_commit":LOT46A_TRAINING_COMMIT,
+        "finalization_code_commit":LOT46A_FINALIZATION_COMMIT}}
+    engineering = {"training_code_commit":LOT46A_TRAINING_COMMIT,"finalization_code_commit":LOT46A_FINALIZATION_COMMIT}
+    readiness = {"LOT46A_VALID":"YES","LOT46B_TRAINING_READY":"YES","CUDA_TRAINING_SMOKE_PASS":{"value":"YES"}}
+    reports = {"experiment_assignment.json":assignment,"status.json":status,"lot46a_checkpoint_integrity.json":integrity,
+        "lot46a_engineering_report.json":engineering,"lot46a_readiness_report.json":readiness,
+        "lot46a_cuda_smoke.json":{"status":"PASS"}}
+    for name, payload in reports.items(): (output / name).write_text(json.dumps(payload))
+    (durable / "checkpoint-00000040.manifest.json").write_text(json.dumps(manifest))
+    bundle = tmp_path / "lot46a_engineering_results.tar.gz"
+    with tarfile.open(bundle,"w:gz") as archive:
+        for name in ("experiment_assignment.json","status.json","lot46a_checkpoint_integrity.json",
+                     "lot46a_engineering_report.json","lot46a_readiness_report.json"):
+            archive.add(output/name,arcname=f"lot46a_engineering_results/{name}")
     digest = hashlib.sha256(bundle.read_bytes()).hexdigest()
-    monkeypatch.setattr("songo_ai.training.lot46b.LOT46A_EXPORT_SHA256", digest)
-    (output / "lot46a_readiness_report.json").write_text(json.dumps({"LOT46A_VALID":"YES","LOT46B_TRAINING_READY":"YES",
-        "CUDA_TRAINING_SMOKE_PASS":{"value":"YES"}}))
-    (output / "lot46a_checkpoint_integrity.json").write_text(json.dumps({"status":"PASS"}))
-    (output / "lot46a_cuda_smoke.json").write_text(json.dumps({"status":"PASS"}))
-    (output / "lot46a_engineering_report.json").write_text(json.dumps({"training_code_commit":LOT46A_TRAINING_COMMIT,
-        "finalization_code_commit":LOT46A_FINALIZATION_COMMIT}))
-    assert audit_lot46a_prerequisites(output, bundle)["status"] == "PASS"
-    bundle.write_bytes(b"changed")
-    with pytest.raises(Lot46Error, match="PREREQUISITE_FAILURE"):
-        audit_lot46a_prerequisites(output, bundle)
+    Path(str(bundle)+".sha256").write_text(f"{digest}  {bundle.name}\n")
+    monkeypatch.setattr("songo_ai.training.lot46b.LOT46A_EXPORT_SHA256",digest)
+    return output,bundle,reports
+
+
+def test_bundle_valid_sha_sidecar_commits_checkpoint_and_distinct_current_commit(tmp_path,monkeypatch):
+    output,bundle,_=_provenance_fixture(tmp_path,monkeypatch);diagnostic=tmp_path/"diagnostic.json"
+    current="4c2339f9c1278aec1ad205fec8f7d14fc42f7306"
+    report=audit_lot46a_prerequisites(output,bundle,diagnostic_path=diagnostic,current_code_commit=current)
+    assert report["status"]=="PASS" and diagnostic.is_file()
+    assert report["training_commit_actual"]!=report["finalization_commit_actual"]!=current
+    assert report["checks"]["CHECKPOINT_INTEGRITY"] is True
+
+
+def test_modified_bundle_and_correct_report_fails(tmp_path,monkeypatch):
+    output,bundle,_=_provenance_fixture(tmp_path,monkeypatch);bundle.write_bytes(bundle.read_bytes()+b"changed")
+    with pytest.raises(Lot46Error,match="PREREQUISITE_FAILURE"):
+        audit_lot46a_prerequisites(output,bundle,current_code_commit="4"*40)
+
+
+@pytest.mark.parametrize("sidecar_value",[None,"not-a-sha bundle.tar.gz\n"])
+def test_sidecar_absent_or_invalid_fails_with_diagnostic(tmp_path,monkeypatch,sidecar_value):
+    output,bundle,_=_provenance_fixture(tmp_path,monkeypatch);sidecar=Path(str(bundle)+".sha256")
+    if sidecar_value is None: sidecar.unlink()
+    else: sidecar.write_text(sidecar_value)
+    diagnostic=tmp_path/"diagnostic.json"
+    with pytest.raises(Lot46Error): audit_lot46a_prerequisites(output,bundle,diagnostic_path=diagnostic,current_code_commit="4"*40)
+    payload=json.loads(diagnostic.read_text());assert payload["bundle_sha256_sidecar"] is None and payload["sidecar_error"]
+
+
+def test_provenance_incoherence_and_missing_field_fail(tmp_path,monkeypatch):
+    output,bundle,reports=_provenance_fixture(tmp_path,monkeypatch)
+    status={**reports["status.json"],"code_commit":"a"*40};(output/"status.json").write_text(json.dumps(status))
+    with pytest.raises(Lot46Error):audit_lot46a_prerequisites(output,bundle,current_code_commit="4"*40)
+    status.pop("code_commit");(output/"status.json").write_text(json.dumps(status))
+    with pytest.raises(Lot46Error):audit_lot46a_prerequisites(output,bundle,current_code_commit="4"*40)
+
+
+def test_correct_archive_but_external_report_incoherent_fails(tmp_path,monkeypatch):
+    output,bundle,reports=_provenance_fixture(tmp_path,monkeypatch)
+    changed={**reports["lot46a_engineering_report.json"],"finalization_code_commit":"f"*40}
+    (output/"lot46a_engineering_report.json").write_text(json.dumps(changed))
+    with pytest.raises(Lot46Error):audit_lot46a_prerequisites(output,bundle,current_code_commit="4"*40)
+
+
+def test_pilot_prepare_prerequisite_audit_is_idempotent(tmp_path,monkeypatch):
+    output,bundle,_=_provenance_fixture(tmp_path,monkeypatch);diagnostic=tmp_path/"diagnostic.json"
+    first=audit_lot46a_prerequisites(output,bundle,diagnostic_path=diagnostic,current_code_commit="4"*40)
+    second=audit_lot46a_prerequisites(output,bundle,diagnostic_path=diagnostic,current_code_commit="4"*40)
+    for report in (first,second): report.pop("checked_at")
+    assert first==second
 
 
 def test_no_arena_or_promotion_stage_is_exposed():
