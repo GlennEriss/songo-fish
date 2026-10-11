@@ -488,13 +488,14 @@ def resume_into(path: Path, *, config: ExperimentConfig, model, optimizer, sched
 
 
 def evaluate(model, rows: list[dict], device: torch.device, batch_size: int=256) -> dict:
-    before=model_fingerprint(model); model.eval(); ce=top=kl=rank=sq=ae=n=labeled=sign_correct=0; value_predictions=[]
+    before=model_fingerprint(model); model.eval(); ce=top=kl=rank=sq=ae=entropy=n=labeled=sign_correct=0; value_predictions=[]
     with torch.no_grad():
         for start in range(0,len(rows),batch_size):
             b=collate(rows[start:start+batch_size],device); logits,value=model(b["graph"]); masked=mask_policy_logits(logits,b["legal_mask"])
             logp=torch.log_softmax(masked,-1); p=torch.softmax(masked,-1); target=b["policy_target"]
             ce+=float((-(target*logp).sum(-1)).sum()); top+=int((p.argmax(-1)==target.argmax(-1)).sum())
             kl+=float((target*(torch.log(target.clamp_min(1e-12))-logp)).sum());
+            entropy+=float((-(p*logp).sum(-1)).sum())
             for x,y,m in zip(p,target,b["legal_mask"]):
                 legal=torch.where(m)[0]; rank+=float(torch.equal(legal[torch.argsort(x[legal],descending=True)],legal[torch.argsort(y[legal],descending=True)]))
             vm=b["value_target_available"]
@@ -521,7 +522,8 @@ def evaluate(model, rows: list[dict], device: torch.device, batch_size: int=256)
             result[str(key)]={"count":len(group),"mse":statistics.fmean((x["prediction"]-x["terminal_z"])**2 for x in group),
                 "mae":statistics.fmean(abs(x["prediction"]-x["terminal_z"]) for x in group)}
         return result
-    return {"positions":n,"policy_ce":ce/n,"policy_kl":kl/n,"top1_agreement":top/n,"exact_ranking_agreement":rank/n,
+    return {"positions":n,"policy_ce":ce/n,"policy_kl":kl/n,"policy_entropy":entropy/n,
+            "top1_agreement":top/n,"exact_ranking_agreement":rank/n,
             "value_mse":sq/labeled if labeled else None,"value_mae":ae/labeled if labeled else None,
             "value_sign_accuracy":sign_correct/labeled if labeled else None,"value_labeled":labeled,
             "value_predictions":value_predictions,"value_calibration":calibration,
@@ -554,7 +556,10 @@ def _strategic_losses(model, rows: list[dict], device: torch.device, rho: float)
 def step_model(model, optimizer, scheduler, rows: list[dict], config: ExperimentConfig, device: torch.device,
                strategic_rows: list[dict] | None=None) -> dict:
     model.train(); b=collate(rows,device); logits,value=model(b["graph"])
-    policy=-(b["policy_target"]*torch.log_softmax(mask_policy_logits(logits,b["legal_mask"]),-1)).sum(-1).mean()
+    logp=torch.log_softmax(mask_policy_logits(logits,b["legal_mask"]),-1); probs=logp.exp()
+    policy=-(b["policy_target"]*logp).sum(-1).mean()
+    policy_kl=(b["policy_target"]*(torch.log(b["policy_target"].clamp_min(1e-12))-logp)).sum(-1).mean()
+    policy_entropy=-(probs*logp).sum(-1).mean()
     vm=b["value_target_available"]; value_loss=(value[vm]-b["value_target"][vm]).square().mean() if vm.any() else value.sum()*0
     unconstrained = config.candidate_family in {"DEEP_POLICY_UNCONSTRAINED", "DEEP_POLICY_REPLAY_RELABELED"}
     if config.candidate_family != "VALUE_INDEPENDENT" and not unconstrained:
@@ -570,7 +575,8 @@ def step_model(model, optimizer, scheduler, rows: list[dict], config: Experiment
     optimization_skipped=config.candidate_family=="VALUE_INDEPENDENT" and not bool(vm.any())
     if not optimization_skipped:
         optimizer.step(); scheduler.step()
-    return {"loss_total":float(total.detach()),"loss_policy":float(policy.detach()),"loss_value":float(value_loss.detach()),
+    return {"loss_total":float(total.detach()),"loss_policy":float(policy.detach()),"train_policy_kl":float(policy_kl.detach()),
+            "train_policy_entropy":float(policy_entropy.detach()),"loss_value":float(value_loss.detach()),
             "loss_correction":float(corr.detach()),"loss_preservation":float(preserve.detach()),"gradient_norm":grad,
             "gradient_clip":threshold,"nonfinite_gradients":False,"optimization_skipped_no_value_labels":optimization_skipped,
             "value_labels_in_batch":int(vm.sum()),"learning_rate":optimizer.param_groups[0]["lr"]}
@@ -624,7 +630,7 @@ def run_training(config: ExperimentConfig, root: Path, *, resume: bool=False, st
     source_weights={s.target_source:s.weight for s in config.dataset_sources};train_rows=ctx["splits"]["train"][:train_limit] if train_limit else ctx["splits"]["train"]
     sampler=WeightedStatefulSampler(train_rows,source_weights,config.seed,config.batch_size)
     strategic=[]
-    if config.candidate_family!="VALUE_INDEPENDENT":
+    if config.candidate_family in {"CONTROL","DEEP_POLICY","DEEP_POLICY_REPLAY"}:
         battery=Path(config.objective.get("strategic_battery", "")); battery=battery if battery.is_absolute() else root/battery
         if not battery.is_file(): raise Lot46Error(f"strategic battery missing: {battery}")
         strategic=prepare_strategic_battery(battery,model,device)
