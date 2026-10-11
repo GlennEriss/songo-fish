@@ -14,8 +14,10 @@ from songo_ai.training.lot46b import (
     LOT46A_FINALIZATION_COMMIT,
     LOT46A_TRAINING_COMMIT,
     PILOT_IDS,
+    STAGE_A_IDS,
     _assert_pilot_contract,
     audit_lot46a_prerequisites,
+    classify_support_delta,
 )
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -187,3 +189,26 @@ def test_no_arena_or_promotion_stage_is_exposed():
     source = (ROOT / "apps/trainer/scripts/run_srn_lot46.py").read_text()
     for forbidden in ('"pilot-arena"', '"pilot-promote"', '"main-training"'):
         assert forbidden not in source
+
+
+def test_stage_a_configurations_are_isolated_frozen_and_cumulative():
+    paths=sorted((ROOT/"configs/lot46b_b2").glob("stage_a_*.json"))
+    configs=[ExperimentConfig.load(path) for path in paths]
+    assert len(configs)==4
+    assert {c.experiment_id for c in configs}==set(STAGE_A_IDS.values())
+    assert {c.max_steps for c in configs}=={1000}
+    assert {c.validation_interval for c in configs}=={250}
+    assert {c.checkpoint_interval for c in configs}=={250}
+    assert {c.seed for c in configs}=={20264621}
+    assert len({c.output_directory for c in configs})==4
+    assert not ({Path(c.output_directory).name for c in configs} & set(PILOT_IDS.values()))
+    for config in configs: _assert_pilot_contract(config)
+
+
+def test_correction_threshold_is_preregistered_symmetric_and_uncertain_at_boundary():
+    assert classify_support_delta(.051)=="potential_correction"
+    assert classify_support_delta(-.051)=="potential_regression"
+    assert classify_support_delta(.05)=="uncertain_change"
+    assert classify_support_delta(-.05)=="uncertain_change"
+    assert classify_support_delta(0)=="uncertain_change"
+    with pytest.raises(Lot46Error): classify_support_delta(float("nan"))

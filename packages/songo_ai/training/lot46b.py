@@ -50,6 +50,18 @@ PILOT_IDS = {
     "DEEP_POLICY_REPLAY": "LOT46B_PILOT_DEEP_REPLAY_001",
     "VALUE_INDEPENDENT": "LOT46B_PILOT_VALUE_001",
 }
+STAGE_A_IDS = {
+    "CONTROL": "LOT46B_B2_STAGE_A_CONTROL_001",
+    "DEEP_POLICY": "LOT46B_B2_STAGE_A_DEEP_POLICY_001",
+    "DEEP_POLICY_REPLAY": "LOT46B_B2_STAGE_A_DEEP_REPLAY_001",
+    "VALUE_INDEPENDENT": "LOT46B_B2_STAGE_A_VALUE_001",
+}
+STAGE_A_REPORTS = {
+    "CONTROL": "lot46b_b2_stage_a_control.json",
+    "DEEP_POLICY": "lot46b_b2_stage_a_deep_policy.json",
+    "DEEP_POLICY_REPLAY": "lot46b_b2_stage_a_deep_replay.json",
+    "VALUE_INDEPENDENT": "lot46b_b2_stage_a_value.json",
+}
 LOT46A_EXPORT_SHA256 = "01b9e1f2e0c0b7a559fceaec74bdd30347786b4fcb5860bae5b0acbae6c96083"
 LOT46A_TRAINING_COMMIT = "b9417555e555ac936580f46c33e640cdcc60d51d"
 LOT46A_FINALIZATION_COMMIT = "35d12ae5f14517f5b472513c0929fd09ebafa9ca"
@@ -225,12 +237,16 @@ def audit_lot46a_prerequisites(lot46a_output: Path, export_bundle: Path, *,
 
 
 def _assert_pilot_contract(config: ExperimentConfig) -> None:
-    expected = PILOT_IDS.get(config.candidate_family)
+    stage_a = config.experiment_id == STAGE_A_IDS.get(config.candidate_family)
+    expected = STAGE_A_IDS.get(config.candidate_family) if stage_a else PILOT_IDS.get(config.candidate_family)
     if config.experiment_id != expected:
         raise Lot46Error(f"pilot id mismatch: expected {expected}")
-    if config.max_steps != 100:
-        raise Lot46Error("Lot46B-B1 pilot budget must be exactly 100 steps")
-    if config.confirm_full_training:
+    expected_steps = 1000 if stage_a else 100
+    if config.max_steps != expected_steps:
+        raise Lot46Error(f"Lot46B budget must be exactly {expected_steps} steps")
+    if stage_a and not config.confirm_full_training:
+        raise Lot46Error("Lot46B-B2 Stage A requires explicit full-training confirmation")
+    if not stage_a and config.confirm_full_training:
         raise Lot46Error("Lot46B-B1 must not enable full training")
     if config.device != "cuda":
         raise Lot46Error("Lot46B-B1 scientific pilots require explicit CUDA")
@@ -424,6 +440,117 @@ def pilot_report(config_path: Path, root: Path) -> dict:
     }
     _write_json(output / PILOT_FAMILIES[config.candidate_family], report)
     return report
+
+
+def stage_a_correction_analysis(config: ExperimentConfig, root: Path, trained, device: torch.device,
+                                *, support_threshold: float = 0.05) -> dict:
+    """Offline diagnostic against authorized Lot45 MCTS32768 distributions.
+
+    The preregistered support threshold is absolute probability mass. These
+    diagnostics are not win-rate or strategic-strength estimates.
+    """
+    deep_config = ExperimentConfig.load(root / "configs/lot46b_b2/stage_a_deep_policy.json")
+    deep_ctx = prepare_context(deep_config, root)
+    rows = deep_ctx["splits"]["validation"]
+    initial, _ = load_initial_model(config, root, device)
+    initial.eval(); trained.eval()
+    totals = {"positions": 0, "disagreements": 0, "g4_deep": 0, "g5_deep": 0,
+              "potential_correction": 0, "potential_regression": 0, "uncertain_change": 0}
+    ce = kl = entropy = margin = legal_ok = 0.0
+    with torch.no_grad():
+        for start in range(0, len(rows), 128):
+            batch_rows = rows[start:start + 128]; batch = collate(batch_rows, device)
+            g4_logits, _ = initial(batch["graph"]); g5_logits, _ = trained(batch["graph"])
+            legal = batch["legal_mask"]
+            g4 = torch.softmax(mask_policy_logits(g4_logits, legal), dim=1)
+            g5 = torch.softmax(mask_policy_logits(g5_logits, legal), dim=1)
+            deep = batch["policy_target"]
+            a4, a5, ad = g4.argmax(1), g5.argmax(1), deep.argmax(1)
+            n = len(batch_rows); totals["positions"] += n
+            totals["g4_deep"] += int((a4 == ad).sum()); totals["g5_deep"] += int((a5 == ad).sum())
+            disagreements = a4 != a5; totals["disagreements"] += int(disagreements.sum())
+            delta = deep.gather(1, a5[:, None]).squeeze(1) - deep.gather(1, a4[:, None]).squeeze(1)
+            totals["potential_correction"] += int((disagreements & (delta > support_threshold)).sum())
+            totals["potential_regression"] += int((disagreements & (delta < -support_threshold)).sum())
+            totals["uncertain_change"] += int((disagreements & (delta.abs() <= support_threshold)).sum())
+            ce += float((-(deep * g5.clamp_min(1e-12).log()).sum(1)).sum())
+            kl += float((deep * (deep.clamp_min(1e-12).log() - g5.clamp_min(1e-12).log())).sum())
+            entropy += float((-(deep * deep.clamp_min(1e-12).log()).sum(1)).sum())
+            sorted_deep = deep.sort(dim=1, descending=True).values
+            margin += float((sorted_deep[:, 0] - sorted_deep[:, 1]).sum())
+            legal_ok += float(legal.gather(1, a5[:, None]).sum())
+    n = max(1, totals["positions"]); changed = max(1, totals["disagreements"])
+    return {**totals,
+        "G4_G5_DISAGREEMENT_RATE": totals["disagreements"] / n,
+        "G4_DEEP_AGREEMENT_RATE": totals["g4_deep"] / n,
+        "G5_DEEP_AGREEMENT_RATE": totals["g5_deep"] / n,
+        "POTENTIAL_CORRECTION_RATE": totals["potential_correction"] / changed,
+        "POTENTIAL_REGRESSION_RATE": totals["potential_regression"] / changed,
+        "UNCERTAIN_CHANGE_RATE": totals["uncertain_change"] / changed,
+        "POLICY_CE_TO_DEEP": ce / n, "POLICY_KL_TO_DEEP": kl / n,
+        "TOP1_AGREEMENT_TO_DEEP": totals["g5_deep"] / n,
+        "mean_deep_entropy": entropy / n, "mean_top1_top2_margin": margin / n,
+        "legal_action_consistency": legal_ok / n, "support_threshold_preregistered": support_threshold,
+        "target_visit_budget": 32768, "interpretation": "offline diagnostic, not a win rate"}
+
+
+def classify_support_delta(delta: float, threshold: float = 0.05) -> str:
+    if not math.isfinite(delta) or threshold <= 0:
+        raise Lot46Error("support delta and preregistered threshold must be finite and positive")
+    if delta > threshold: return "potential_correction"
+    if delta < -threshold: return "potential_regression"
+    return "uncertain_change"
+
+
+def stage_a_report(config_path: Path, root: Path) -> dict:
+    config = ExperimentConfig.load(config_path); _assert_pilot_contract(config)
+    if config.experiment_id != STAGE_A_IDS.get(config.candidate_family):
+        raise Lot46Error("stage-a report requires a B2 Stage A experiment")
+    base = pilot_report(config_path, root); ctx = prepare_context(config, root)
+    model, _, _ = _latest_model(config, root, ctx, torch.device("cuda"))
+    correction = ({"status": "NOT_APPLICABLE_TO_VALUE_ONLY"} if config.candidate_family == "VALUE_INDEPENDENT"
+                  else stage_a_correction_analysis(config, root, model, torch.device("cuda")))
+    status = _json(ctx["output"] / "status.json")
+    base.update({"correction_metrics": correction, "optimizer_steps": status["global_step"],
+        "resume_status": "PASS" if status.get("resumed") and status["global_step"] == 1000 else "FAIL",
+        "stage": "LOT46B_B2_STAGE_A", "budget": 1000})
+    _write_json(ctx["output"] / STAGE_A_REPORTS[config.candidate_family], base)
+    return base
+
+
+def stage_a_export(config_paths: list[Path], root: Path, bundle: Path) -> dict:
+    configs = [ExperimentConfig.load(path) for path in config_paths]
+    if {c.experiment_id for c in configs} != set(STAGE_A_IDS.values()):
+        raise Lot46Error("stage-a export requires the four frozen B2 experiment IDs")
+    reports = []; completed = []
+    for config in configs:
+        path = Path(config.output_directory) / STAGE_A_REPORTS[config.candidate_family]
+        payload = _json(path); reports.append(payload)
+        validation = payload.get("checkpoint_integrity", {})
+        if payload.get("optimizer_steps") == 1000 and validation.get("status") == "PASS" and payload.get("resume_status") == "PASS":
+            completed.append(config.experiment_id)
+    valid = len(completed) == 4
+    comparison = {p["family"]: {"validation_metrics": p["validation_metrics"],
+        "correction_metrics": p["correction_metrics"], "preservation_metrics": p["preservation_metrics"]} for p in reports}
+    global_report = {"code_commit": git_commit(root), "STAGE_A_BUDGET": 1000,
+        "completed_experiments": completed, "comparison": comparison,
+        "STAGE_A_VALID": "YES" if valid else "NO", "STAGE_B_STARTED": "NO", "STAGE_C_STARTED": "NO",
+        "ARENAS": "NOT_RUN", "SEARCH_COMPRESSION": "NOT_RUN", "G5_PROMOTED": "NO",
+        "limitations": ["offline metrics are not win rates", "no arenas", "MCTS32768 targets are not strategic ground truth"]}
+    global_path = bundle.parent / "lot46b_b2_stage_a_comparison.json"; _write_json(global_path, global_report)
+    bundle.parent.mkdir(parents=True, exist_ok=True)
+    with tarfile.open(bundle, "w:gz") as archive:
+        archive.add(global_path, arcname=global_path.name)
+        for config in configs:
+            out = Path(config.output_directory)
+            for path in sorted(out.rglob("*")):
+                if path.is_file() and "checkpoint-" not in path.name:
+                    archive.add(path, arcname=f"{config.experiment_id}/{path.relative_to(out)}")
+            for manifest in sorted((out / "durable_checkpoints").glob("*.manifest.json")):
+                archive.add(manifest, arcname=f"{config.experiment_id}/checkpoint_references/{manifest.name}")
+    digest = sha256(bundle); Path(str(bundle) + ".sha256").write_text(f"{digest}  {bundle.name}\n")
+    return {"EXPORT": "PASS", "path": str(bundle), "sha256": digest, "size": bundle.stat().st_size,
+        "global_report": global_report, "weights_included": False, "MAIN_TRAINING_COMPLETED": "STAGE_A_ONLY"}
 
 
 def pilot_run(config_path: Path, root: Path, *, resume: bool = False, stop_after: int | None = None) -> dict:
