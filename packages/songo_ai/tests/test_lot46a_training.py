@@ -221,3 +221,16 @@ def test_incompatible_historical_run_is_never_overwritten(tmp_path):
     before=(output/"experiment_assignment.json").read_bytes()
     with pytest.raises(Lot46Error,match="will not be overwritten"):_reuse_completed_run(cfg,output,{"status":"PASS"})
     assert (output/"experiment_assignment.json").read_bytes()==before
+
+
+def test_completed_training_is_reused_and_known_failed_status_is_repaired(tmp_path,monkeypatch):
+    from run_srn_lot46 import reuse_completed_training
+    cfg=config(tmp_path,"LOT46A_TRAIN_REUSE",1);run_training(cfg,ROOT);output=Path(cfg.output_directory)
+    checkpoint_before=DurableCheckpointStore(output/"local_checkpoints",output/"durable_checkpoints").latest(cfg.experiment_id)[0].read_bytes()
+    (output/"status.json").write_text(json.dumps({"experiment_id":cfg.experiment_id,"status":"FAILED","stage":"train",
+        "error_message":"experiment output is assigned to a different configuration"}))
+    monkeypatch.setattr("run_srn_lot46.git_commit",lambda:"f"*40)
+    reused=reuse_completed_training(cfg)
+    assert reused["status"]=="COMPLETED" and reused["reused_existing"] is True
+    assert reused["status_recovered_from_committed_checkpoint"] is True
+    assert DurableCheckpointStore(output/"local_checkpoints",output/"durable_checkpoints").latest(cfg.experiment_id)[0].read_bytes()==checkpoint_before

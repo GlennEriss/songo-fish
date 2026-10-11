@@ -302,6 +302,42 @@ def _reuse_completed_run(config: ExperimentConfig, output: Path, report: dict) -
             "reuse_validation":checks,"current_code_commit":git_commit()}
 
 
+def reuse_completed_training(config: ExperimentConfig) -> dict | None:
+    """Reuse a committed final checkpoint; repair only the known failed-status clobber."""
+    output=Path(config.output_directory);output=output if output.is_absolute() else REPOSITORY_ROOT/output
+    assignment_path=output/"experiment_assignment.json";status_path=output/"status.json"
+    if not assignment_path.is_file(): return None
+    assignment=json.loads(assignment_path.read_text())
+    store=DurableCheckpointStore(output/"local_checkpoints",output/"durable_checkpoints");latest=store.latest(config.experiment_id)
+    if not latest or latest[1].get("step",0)<config.max_steps: return None
+    checkpoint_path,manifest=latest;payload=torch.load(checkpoint_path,map_location="cpu",weights_only=False)
+    commit=assignment.get("code_commit")
+    checks={"assignment_experiment":assignment.get("experiment_id")==config.experiment_id,
+        "assignment_output":assignment.get("output_directory")==str(output.resolve()),
+        "config_fingerprint":assignment.get("config_fingerprint")==canonical_hash(config.payload()),
+        "checkpoint_experiment":payload.get("experiment_id")==config.experiment_id,
+        "checkpoint_config":payload.get("training_config_fingerprint")==canonical_hash(config.payload()),
+        "checkpoint_step":payload.get("global_step")==manifest.get("step")==config.max_steps,
+        "commit_present":isinstance(commit,str) and len(commit)==40,
+        "commit_consistent":payload.get("code_commit")==manifest.get("code_commit")==commit}
+    if not all(checks.values()): raise Lot46Error(f"existing experiment evidence is incompatible and will not be overwritten: {checks}")
+    status=json.loads(status_path.read_text()) if status_path.is_file() else {}
+    completed=status.get("status")=="COMPLETED" and status.get("global_step")==config.max_steps and status.get("code_commit")==commit
+    clobbered=status.get("status")=="FAILED" and status.get("stage")=="train" and status.get("error_message")=="experiment output is assigned to a different configuration"
+    if not completed and not clobbered:
+        raise Lot46Error(f"existing experiment status is not safely reusable and will not be overwritten: {status.get('status')}")
+    if clobbered:
+        validation_path=output/"validation_latest.json"
+        status={"experiment_id":config.experiment_id,"status":"COMPLETED","global_step":config.max_steps,
+            "steps_executed_this_invocation":0,"resumed":False,"device":"historical_unknown","code_commit":commit,
+            "dataset_fingerprint":payload.get("dataset_fingerprint"),"split_fingerprint":payload.get("split_fingerprint"),
+            "validation":json.loads(validation_path.read_text()) if validation_path.is_file() else {},
+            "checkpoint_durable":True,"status_recovered_from_committed_checkpoint":True}
+        atomic_json(status_path,status)
+    return {**status,"reused_existing":True,"historical_code_commit":commit,
+            "reuse_validation":checks,"current_code_commit":git_commit()}
+
+
 def micro_overfit_a(config_path: Path) -> dict:
     cfg=ExperimentConfig.load(config_path); ctx=prepare_context(cfg,REPOSITORY_ROOT)
     micro_id=f"{cfg.experiment_id}_MICRO"; micro_out=ctx["output"]/"micro_overfit"/micro_id
@@ -494,16 +530,20 @@ def main() -> None:
         elif a.stage=="micro-overfit": result=micro_overfit_a(a.config)
         elif a.stage in {"train","resume"}:
             cfg=ExperimentConfig.load(a.config)
-            try: result=run_training(cfg,REPOSITORY_ROOT,resume=a.stage=="resume")
-            except Exception as exc:
-                out=Path(cfg.output_directory);out=out if out.is_absolute() else REPOSITORY_ROOT/out
-                atomic_json(out/"status.json",{"experiment_id":cfg.experiment_id,"status":"FAILED","stage":a.stage,
-                    "error_type":type(exc).__name__,"error_message":str(exc),"traceback":traceback.format_exc(),"timestamp":time.time()})
-                raise
+            reused=reuse_completed_training(cfg)
+            if reused is not None: result=reused
+            else:
+                try: result=run_training(cfg,REPOSITORY_ROOT,resume=a.stage=="resume")
+                except Exception as exc:
+                    out=Path(cfg.output_directory);out=out if out.is_absolute() else REPOSITORY_ROOT/out
+                    atomic_json(out/"status.json",{"experiment_id":cfg.experiment_id,"status":"FAILED","stage":a.stage,
+                        "error_type":type(exc).__name__,"error_message":str(exc),"traceback":traceback.format_exc(),"timestamp":time.time()})
+                    raise
         elif a.stage=="validate":
-            cfg=ExperimentConfig.load(a.config);ctx=prepare_context(cfg,REPOSITORY_ROOT);device=torch.device("cuda" if cfg.device in {"cuda","auto"} and torch.cuda.is_available() else "cpu");model,fp=load_initial_model(cfg,REPOSITORY_ROOT,device);configure_trainable(model,cfg.candidate_family,cfg.training_mode);opt,sch=make_optimizer_scheduler(model,cfg);sampler=WeightedStatefulSampler(ctx["splits"]["train"],{s.target_source:s.weight for s in cfg.dataset_sources},cfg.seed,cfg.batch_size);store=DurableCheckpointStore(ctx["output"]/"local_checkpoints",ctx["output"]/"durable_checkpoints");latest=store.latest(cfg.experiment_id)
+            cfg=ExperimentConfig.load(a.config);reused=reuse_completed_training(cfg);ctx=prepare_context(cfg,REPOSITORY_ROOT);device=torch.device("cuda" if cfg.device in {"cuda","auto"} and torch.cuda.is_available() else "cpu");model,fp=load_initial_model(cfg,REPOSITORY_ROOT,device);configure_trainable(model,cfg.candidate_family,cfg.training_mode);opt,sch=make_optimizer_scheduler(model,cfg);sampler=WeightedStatefulSampler(ctx["splits"]["train"],{s.target_source:s.weight for s in cfg.dataset_sources},cfg.seed,cfg.batch_size);store=DurableCheckpointStore(ctx["output"]/"local_checkpoints",ctx["output"]/"durable_checkpoints");latest=store.latest(cfg.experiment_id)
             if not latest:raise Lot46Error("no checkpoint to validate")
-            resume_into(latest[0],config=cfg,model=model,optimizer=opt,scheduler=sch,sampler=sampler,dataset_fingerprint=ctx["dataset_fingerprint"],split_fingerprint=ctx["split_fingerprint"],initial_fingerprint=fp,code_commit=git_commit());result=evaluate(model,ctx["splits"]["validation"],device);atomic_json(ctx["output"]/"validation.json",result)
+            if reused is None:raise Lot46Error("validation requires a completed durable checkpoint")
+            resume_into(latest[0],config=cfg,model=model,optimizer=opt,scheduler=sch,sampler=sampler,dataset_fingerprint=ctx["dataset_fingerprint"],split_fingerprint=ctx["split_fingerprint"],initial_fingerprint=fp,code_commit=reused["historical_code_commit"]);result=evaluate(model,ctx["splits"]["validation"],device);result.update({"checkpoint_code_commit":reused["historical_code_commit"],"validation_code_commit":git_commit()});atomic_json(ctx["output"]/"validation.json",result)
         elif a.stage=="inspect-checkpoint": result=inspect_checkpoint_a(a.config)
         elif a.stage=="status":
             cfg=ExperimentConfig.load(a.config);out=Path(cfg.output_directory);out=out if out.is_absolute() else REPOSITORY_ROOT/out;result=json.loads((out/"status.json").read_text()) if (out/"status.json").is_file() else {"status":"NOT_STARTED"}
