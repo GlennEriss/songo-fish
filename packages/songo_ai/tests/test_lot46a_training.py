@@ -11,7 +11,7 @@ from songo_ai.training.lot46 import Lot46Error, group_aware_split
 from songo_ai.training.lot46a import (DatasetSource, DurableCheckpointStore,
     ExperimentConfig, WeightedStatefulSampler, canonical_hash,
     configure_trainable, make_optimizer_scheduler, resume_into, run_training,
-    validate_bundle_manifest, validate_rows, validate_scientific_inputs)
+    load_sources, validate_bundle_manifest, validate_rows, validate_scientific_inputs)
 
 ROOT=Path(__file__).resolve().parents[3]
 CONTROL=ROOT/"configs/lot46a/control_smoke.json"
@@ -71,6 +71,22 @@ def test_value_contract_accepts_only_proven_terminal_aggregate():
     assert validate_rows([row])["value_labeled"]==1
     row["z_mean"]=.5
     with pytest.raises(Lot46Error,match="inconsistent"):validate_rows([row])
+
+
+def test_duplicate_reanalysis_rows_merge_terminal_provenance(tmp_path):
+    dataset=tmp_path/"replay.jsonl"
+    base={"fingerprint":"duplicate-state","state":{"board":[0]*16,"player_to_move":1},
+          "visit_counts":[1,0,0,0,0,0,0],"legal_mask":[1,0,0,0,0,0,0],
+          "value_target_available":True,"z_mean":-1.0,
+          "z_counts":{"win":0,"draw":0,"loss":1,"unknown":0},"z_perspective":"player_to_move"}
+    dataset.write_text("\n".join(json.dumps(base) for _ in range(2))+"\n")
+    cfg=replace(config(tmp_path),candidate_family="DEEP_POLICY_REPLAY",
+        dataset_sources=(DatasetSource("reanalysis",str(dataset),1.0,"REPLAY",32768),))
+    rows,audit=load_sources(cfg,tmp_path)
+    assert audit["unique_states"]==1 and audit["logical_occurrences"]==2
+    assert rows[0]["z_counts"]=={"win":0,"draw":0,"loss":2,"unknown":0}
+    assert rows[0]["z_mean"]==-1.0
+    assert validate_rows(rows)["value_labeled"]==1
 
 
 def test_global_split_prevents_cross_corpus_state_leakage():

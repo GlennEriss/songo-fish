@@ -308,6 +308,18 @@ def load_sources(config: ExperimentConfig, root: Path) -> tuple[list[dict], dict
             if fp in by_fp:
                 old = by_fp[fp]
                 if old["state"] != row["state"]: conflicts.append(fp); continue
+                old_counts, new_counts = old.get("z_counts"), row.get("z_counts")
+                if old_counts is not None or new_counts is not None:
+                    if not isinstance(old_counts, dict) or not isinstance(new_counts, dict):
+                        raise Lot46Error(f"incompatible duplicate Value provenance for physical state: {fp}")
+                    if old.get("z_perspective") != row.get("z_perspective"):
+                        raise Lot46Error(f"incompatible duplicate z perspective for physical state: {fp}")
+                    merged_counts = {key: int(old_counts.get(key, 0)) + int(new_counts.get(key, 0))
+                                     for key in ("win", "draw", "loss", "unknown")}
+                    known = merged_counts["win"] + merged_counts["draw"] + merged_counts["loss"]
+                    old["z_counts"] = merged_counts
+                    old["z_mean"] = ((merged_counts["win"] - merged_counts["loss"]) / known) if known else None
+                    old["value_target_available"] = known > 0
                 old.setdefault("source_variants", []).append({"target_source": row["target_source"], "target_budget": row["target_budget"]})
                 old["source_occurrence_count"] += row["source_occurrence_count"]
                 old["holdout"] = old["holdout"] or row["holdout"]
