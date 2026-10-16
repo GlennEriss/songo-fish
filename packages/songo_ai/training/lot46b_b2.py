@@ -85,14 +85,23 @@ def prepare_b2(stage_a_config_path: Path, standard_path: Path, unconstrained_pat
     # Baselines are frozen before any B2 optimizer step.
     for config,ctx,start in ((standard,std_ctx,1000),(unconstrained,unc_ctx,0)):
         baseline=ctx["output"]/"stage_b2_baseline.json"
-        if not baseline.is_file():
+        existing_baseline=_read(baseline) if baseline.is_file() else None
+        validation=(existing_baseline or {}).get("validation",{})
+        if "policy_entropy" not in validation:
             if start==1000:
-                validation=_read(sa_ctx["output"]/"validation-00001000.json")
+                # Stage A predates the entropy metric. Re-evaluate its immutable
+                # step-1000 checkpoint instead of silently disabling the B2
+                # collapse guard or using a post-B2 checkpoint as the baseline.
+                model,_=load_initial_model(standard,root,torch.device("cuda"))
+                model.load_state_dict(payload["model_state_dict"])
+                from songo_ai.training.lot46a import evaluate
+                validation=evaluate(model,std_ctx["splits"]["validation"],torch.device("cuda"))
             else:
                 model,_=load_initial_model(config,root,torch.device("cuda"))
                 from songo_ai.training.lot46a import evaluate
                 validation=evaluate(model,ctx["splits"]["validation"],torch.device("cuda"))
-            _write(baseline,{"step":start,"validation":validation,"frozen_before_training":True})
+            _write(baseline,{"step":start,"validation":validation,"frozen_before_training":True,
+                "derived_from_checkpoint":str(source[0]) if start==1000 else "INITIAL_CHECKPOINT"})
     report={"ACTIVE_COMMIT":git_commit(root),"STAGE_B1_VALID":"YES","CUDA":"YES","gpu":torch.cuda.get_device_name(0),
         "torch":torch.__version__,"cuda_version":torch.version.cuda,"dataset_fingerprint":std_ctx["dataset_fingerprint"],
         "split_fingerprint":std_ctx["split_fingerprint"],"standard_source_sha256":source[1]["sha256"],

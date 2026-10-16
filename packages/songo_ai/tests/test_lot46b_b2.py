@@ -56,6 +56,12 @@ def test_validation_exposes_policy_entropy():
     assert "policy_entropy" in inspect.getsource(evaluate)
 
 
+def test_prepare_repairs_legacy_stage_a_baseline_entropy():
+    source=inspect.getsource(__import__("songo_ai.training.lot46b_b2",fromlist=["prepare_b2"]).prepare_b2)
+    assert '"policy_entropy" not in validation' in source
+    assert 'model.load_state_dict(payload["model_state_dict"])' in source
+
+
 def test_two_consecutive_validation_degradations_stop(tmp_path):
     _,_,config=configs();config=__import__("dataclasses").replace(config,output_directory=str(tmp_path/config.experiment_id))
     out=Path(config.output_directory);out.mkdir(parents=True)
