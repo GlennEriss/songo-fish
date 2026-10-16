@@ -156,9 +156,11 @@ def run_stage_b3(standard_path: Path, unconstrained_path: Path, root: Path, b2_o
         raise Lot46Error("validation rows are not exactly aligned")
     split_sets={name:{r["fingerprint"] for r in rows} for name,rows in std_ctx["splits"].items()}
     split_groups={name:{str(r.get("split_group") or f"state:{r['fingerprint']}") for r in rows} for name,rows in std_ctx["splits"].items()}
-    for left,right in (("train","validation"),("train","holdout"),("validation","holdout")):
-        if split_sets[left]&split_sets[right] or split_groups[left]&split_groups[right]:
-            raise Lot46Error(f"state/group leakage between {left} and {right}")
+    split_names=tuple(split_sets)
+    for index,left in enumerate(split_names):
+        for right in split_names[index+1:]:
+            if split_sets[left]&split_sets[right] or split_groups[left]&split_groups[right]:
+                raise Lot46Error(f"state/group leakage between {left} and {right}")
     device=torch.device("cuda" if torch.cuda.is_available() else "cpu")
     standard_model,std_path,std_manifest,std_payload,std_initial=_load_frozen(standard,root,device)
     unconstrained_model,unc_path,unc_manifest,unc_payload,unc_initial=_load_frozen(unconstrained,root,device)
