@@ -1,0 +1,8 @@
+{
+  "schema": "songo-lot46b-stage-c0-v1",
+  "execution_authorized": false,
+  "candidates": ["POOL_G4R", "DEEP_POLICY_STANDARD", "DEEP_POLICY_UNCONSTRAINED"],
+  "c1": {"budgets": [512, 4096], "comparisons_per_budget": [["POOL_G4R", "DEEP_POLICY_STANDARD"], ["POOL_G4R", "DEEP_POLICY_UNCONSTRAINED"], ["DEEP_POLICY_STANDARD", "DEEP_POLICY_UNCONSTRAINED"]], "opening_clusters_per_comparison": 400},
+  "c2": {"candidate": "DEEP_POLICY_UNCONSTRAINED+MCTS512", "reference": "POOL_G4R+MCTS4096", "non_inferiority_margin": -0.05, "opening_clusters": 400},
+  "common": {"games_per_opening": 2, "reverse_sides": true, "paired_openings": true, "root_noise": false, "temperature": 0.0, "c_puct": 1.5, "bootstrap_samples": 10000, "confidence_level": 0.95, "optional_stopping": false}
+}

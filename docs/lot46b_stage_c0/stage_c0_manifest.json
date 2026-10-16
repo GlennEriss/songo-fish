@@ -1,0 +1,11 @@
+{
+  "stage": "LOT46B_STAGE_C0",
+  "b2_commit": "34ba99a55cb2debbf37e9f5eb2f7038573327a15",
+  "b2_export_sha256": "11e77ced813e8d71b2eb73dc2e8cb703dcc1b0dd5bba3b6c65d3c474879aea39",
+  "b3_commit": "e804a41b80c6b81380b5fe26138c907308362227",
+  "b3_export_sha256": "4c03c46c99bd5d1238dac15988bd0c02f577ca54d73a90a5239718c7d56c9809",
+  "arena_execution_authorized": false,
+  "training": "NOT_RUN",
+  "mcts_search": "NOT_RUN",
+  "g5_promoted": "NO"
+}

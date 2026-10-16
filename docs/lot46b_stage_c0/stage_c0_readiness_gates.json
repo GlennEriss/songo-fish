@@ -1,0 +1,11 @@
+{
+  "GATE_1": {"status": "NOT_VERIFIED", "reason": "B2/B3 Drive archives require execution in the artifact-owning environment"},
+  "GATE_2": {"status": "NOT_VERIFIED", "reason": "candidate checkpoint bytes are not present locally"},
+  "GATE_3": {"status": "PASS", "reason": "all agents use SongoLegacyGame; rules remain the sole transition and terminal authority"},
+  "GATE_4": {"status": "BLOCKED", "reason": "policy and value share node/global encoders, relational blocks and state_fusion; swapping only value_mlp is not fixed V_G4R"},
+  "GATE_5": {"status": "BLOCKED", "reason": "paired equal-budget arena exists, but durable match manifests, checkpoint identity logging, resume/dedup and unequal-budget C2 orchestration are absent"},
+  "GATE_6": {"status": "PASS", "reason": "SRNMCTSAgent fixes root noise off, temperature 0, equal simulations and equal c_puct for paired SRN agents"},
+  "GATE_7": {"status": "PASS", "reason": "endpoints, paired cluster analysis, multiplicity, margin and fixed stopping are preregistered"},
+  "GATE_8": {"status": "BLOCKED", "reason": "no reliable T4 MCTS512/MCTS4096 throughput measurement exists; only formulas are defensible"},
+  "GATE_9": {"status": "BLOCKED", "reason": "future runner must persist the complete immutable per-game manifest and resume ledger"}
+}

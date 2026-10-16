@@ -1,0 +1,6 @@
+{
+  "POOL_G4R": {"role": "historical baseline", "policy_checkpoint": "data/experiments/lot34r_g4_retry/checkpoints/pool/step-06000.pt", "value_checkpoint": "data/experiments/lot34r_g4_retry/checkpoints/pool/step-12000.pt", "sha256": "VERIFY_FROM_B2_ARTIFACT"},
+  "DEEP_POLICY_STANDARD": {"experiment_id": "LOT46B_B2_STAGE_B_DEEP_POLICY_STANDARD_001", "step": 5000, "sha256": "VERIFY_FROM_B2_ARTIFACT"},
+  "DEEP_POLICY_UNCONSTRAINED": {"experiment_id": "LOT46B_B2_STAGE_B_DEEP_UNCONSTRAINED_001", "step": 5000, "sha256": "VERIFY_FROM_B2_ARTIFACT"},
+  "Minimax-Bidoua": {"role": "external opponent only", "fingerprint": "70f3b5632da10cfa9df4c6f28c19f8c8b8927d514b515d1c31984243d61e334c"}
+}
