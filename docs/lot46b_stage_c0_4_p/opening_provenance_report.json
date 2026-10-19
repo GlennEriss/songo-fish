@@ -1,0 +1,10 @@
+{
+  "scenario":"B",
+  "historical_registry_found":false,
+  "historical_registry_provenance_valid":"NO",
+  "historical_registry_path":"NOT_FOUND",
+  "historical_registry_sha256":"NOT_AVAILABLE",
+  "evidence":{"git_commits_inspected":["34ba99a55cb2debbf37e9f5eb2f7038573327a15","e804a41b80c6b81380b5fe26138c907308362227","e8e72ec54e42b5f3b6bf322d08bec7b66e62ef99","016e69da49bc36afa6356705adb5d2779040a42a","9d018c1053e226a0132bfc18c60bdeaa8ddb6a51","8f380100146f291cf092973e2b7ec47221afb079"],"b2_archive_sha256":"11e77ced813e8d71b2eb73dc2e8cb703dcc1b0dd5bba3b6c65d3c474879aea39","b3_archive_sha256":"4c03c46c99bd5d1238dac15988bd0c02f577ca54d73a90a5239718c7d56c9809"},
+  "prospective_amendment_required":true,
+  "prospective_amendment_status":"PROPOSED"
+}

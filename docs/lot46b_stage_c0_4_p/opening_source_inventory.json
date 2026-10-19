@@ -1,0 +1,11 @@
+{
+  "scenario": "B",
+  "sources": [
+    {"id":"B2_TRAINING_AND_OFFLINE_EVALUATION","classification":"TRAINING_DATA_AND_OFFLINE_VALIDATION","arena_suitable":false,"reason":"candidate training/evaluation provenance; no independent frozen arena designation"},
+    {"id":"B3_PAIRED_POSITIONS","path":"experiments/lot46b_b2_stage_b3/lot46b_b2_stage_b3_paired_positions.jsonl","sha256":"62f1fd172fc8b63f99c0dbbdc96560d6f03550c8ab42521f994c2dd510d9af74","records":994,"classification":"OFFLINE_VALIDATION_DATA","arena_suitable":false,"reason":"no physical state; contains candidate-dependent metrics"},
+    {"id":"LOT46_INPUTS","path":"inputs/lot46_inputs.tar.gz","sha256":"8fc9612d615a8729b9d24cdbbefe4f9354714f99260a877d0292e0aa84c4b4c8","classification":"MIXED_HISTORICAL_INPUTS","arena_suitable":false,"reason":"not historically designated as arena openings; requires prospective source-level audit"}
+  ],
+  "historical_registry_found": false,
+  "eligible_openings": "NOT_DETERMINABLE_BEFORE_SOURCE_APPROVAL",
+  "required_openings": 400
+}

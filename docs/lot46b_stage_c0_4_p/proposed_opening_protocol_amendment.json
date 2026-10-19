@@ -1,0 +1,17 @@
+{
+  "title":"LOT46B_STAGE_C0_OPENING_PROTOCOL_AMENDMENT_V1",
+  "status":"PROPOSED",
+  "prospective":true,
+  "reason":"Original C0 fixed counts and pairing but omitted the opening registry identity and construction rule.",
+  "required_openings":400,
+  "shared_registry_across_comparisons":"PROPOSED_CLARIFICATION",
+  "source_datasets":"REQUIRES_EXPLICIT_APPROVAL_WITH_SHA256",
+  "eligibility":["complete RawSongoState","non-terminal","at least one legal action","documented independent split"],
+  "exclusions":["exact training overlap","exact validation overlap","duplicate physical state","missing provenance","candidate-output-based selection"],
+  "canonicalization":"NONE_BEYOND_EXACT_PHYSICAL_STATE",
+  "selection":{"algorithm":"SHA256_RANK_V1","seed":"REQUIRES_APPROVAL","rank_key":"sha256(seed || physical_state_fingerprint || source_record_id)"},
+  "pairing":{"games_per_opening":2,"reverse_sides":true},
+  "missing_data":"fail closed; no replacement after freeze",
+  "freeze":"publish source hashes, algorithm, seed, records and registry SHA256 before any C0.4/C1 game",
+  "approval":"explicit scientific authorization required"
+}
