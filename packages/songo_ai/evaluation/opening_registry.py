@@ -10,6 +10,7 @@ from songo_ai.dataset.selfplay_schema import RawSongoState
 from songo_ai.songo.rules import SongoLegacyGame
 
 SCHEMA = "songo-opening-registry-v1"
+SELECTION_DOMAIN_V1 = "SONGO_AI_LOT46B_OPENING_REGISTRY_V1"
 
 
 def canonical(value: Any) -> bytes:
@@ -19,6 +20,39 @@ def canonical(value: Any) -> bytes:
 
 def sha256(value: bytes) -> str:
     return hashlib.sha256(value).hexdigest()
+
+
+def verify_source_bytes(value: bytes, expected_sha256: str) -> str:
+    """Fail closed when a frozen source is not the byte stream that was audited."""
+    actual = sha256(value)
+    if len(expected_sha256) != 64 or actual != expected_sha256:
+        raise ValueError("source SHA256 mismatch")
+    return actual
+
+
+def raw_state_from_record(record: Mapping[str, Any]) -> RawSongoState:
+    """Parse only complete physical states; labels and candidate outputs are ignored."""
+    value = record.get("state", record)
+    if not isinstance(value, Mapping) or "board" not in value or "player_to_move" not in value:
+        raise ValueError("complete physical state unavailable")
+    return RawSongoState(tuple(value["board"]), int(value["player_to_move"]))
+
+
+def proposed_selection_seed(domain: str = SELECTION_DOMAIN_V1) -> dict[str, Any]:
+    """Public deterministic proposal. Returning it does not approve a registry."""
+    if not domain or not domain.isascii():
+        raise ValueError("selection seed domain must be non-empty ASCII")
+    digest = sha256(domain.encode("ascii"))
+    return {"domain": domain, "sha256": digest,
+            "integer_big_endian_first_8_bytes": int(digest[:16], 16),
+            "status": "PROPOSED", "approved": False}
+
+
+def sha256_rank_v1(seed: int, state_fingerprint: str, source_record_id: str) -> str:
+    if seed < 0 or len(state_fingerprint) != 64 or not source_record_id:
+        raise ValueError("invalid deterministic rank input")
+    return sha256(str(seed).encode("ascii") + state_fingerprint.encode("ascii")
+                  + source_record_id.encode("utf-8"))
 
 
 def physical_state_payload(state: RawSongoState) -> dict[str, Any]:

@@ -1,0 +1,13 @@
+{
+  "title":"LOT46B_STAGE_C0_OPENING_PROTOCOL_AMENDMENT_V1",
+  "status":"PROPOSED",
+  "approval":"EXPLICIT_SCIENTIFIC_AUTHORIZATION_REQUIRED",
+  "required_openings":400,
+  "recommended_source":{"id":"LOT45_D_REAL_HUMAN_SUBSET","container_sha256":"49eb0f83265a763d06f7b45032d994227208f4149ad0c9fb67b6209fd8289667","original_source_sha256":"17d9ad19921cdbf1591eb54f6c40aa5b710376f6e903491dd39affc605a5ed18","qualification":"PROVISIONAL"},
+  "eligibility":["complete RawSongoState","non-terminal","legal action exists","documented human provenance"],
+  "exclusions":["exact known training overlap","exact validation overlap","duplicate physical state","missing provenance","candidate-output-based selection"],
+  "unresolved_blocker":"B3 physical states or a verifiable fingerprint mapping are absent",
+  "selection":{"algorithm":"SHA256_RANK_V1","seed":3538971373371044805,"seed_status":"PROPOSED","rank_key":"sha256(seed || physical_state_fingerprint || source_record_id)","candidate_outputs_used":false},
+  "freeze_requirement":"publish source hashes, resolved leakage audit, algorithm, approved seed, records and registry SHA256 before any game",
+  "final_registry_constructed":false
+}
