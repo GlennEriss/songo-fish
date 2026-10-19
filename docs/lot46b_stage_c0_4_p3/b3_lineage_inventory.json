@@ -1,0 +1,8 @@
+{
+  "historical_b3_commit": "e804a41b80c6b81380b5fe26138c907308362227",
+  "b3_archive": {"sha256": "4c03c46c99bd5d1238dac15988bd0c02f577ca54d73a90a5239718c7d56c9809", "verified": true, "members": 10},
+  "b2_archive": {"sha256": "11e77ced813e8d71b2eb73dc2e8cb703dcc1b0dd5bba3b6c65d3c474879aea39", "verified": true, "members": 18},
+  "b3_paired_positions": {"records": 994, "unique_position_ids": 994, "sha256": "62f1fd172fc8b63f99c0dbbdc96560d6f03550c8ab42521f994c2dd510d9af74"},
+  "lot45_final_dataset": {"records": 10000, "sha256": "6d2f63807e5a9a4262b0493527472a5a94105afdd38daf369473a626f24e33cc"},
+  "target_source_member": {"path": "data/colab_bridge/lot45_selection.jsonl.gz", "sha256": "49eb0f83265a763d06f7b45032d994227208f4149ad0c9fb67b6209fd8289667", "hash_representation": "inner compressed member bytes"}
+}
