@@ -17,7 +17,7 @@ Le protocole à 400 ouvertures reste numériquement faisable (440 disponibles), 
 
 ## Contrôles
 
-Les tests ciblent jointures, espaces de noms, ambiguïtés, absences, doublons, cardinalités, validation `RawSongoState`, empreintes, couverture partielle/complète, chevauchement, SHA-256 et provenance. Les tests de régression P2 sont également exécutés. Aucun jeu, MCTS, modèle ou checkpoint n’entre dans le nouvel outil.
+Les tests ciblent jointures, espaces de noms, ambiguïtés, absences, doublons, cardinalités, validation `RawSongoState`, empreintes, couverture partielle/complète, chevauchement, SHA-256 et provenance. `21 passed in 1.30s`; la sélection de régressions C0/C0.3/arène donne `41 passed in 1.73s`. La suite complète donne `785 passed, 1 failed in 174.40s`; l’échec préexistant et non lié est `test_end_to_end_three_workers_twelve_shards_with_a_crash`, qui attend un code 137 alors que les trois workers simulés terminent à 0. Aucun jeu, MCTS, modèle ou checkpoint n’entre dans le nouvel outil.
 
 ## Arrêt contrôlé
 
