@@ -133,3 +133,49 @@ def classify_provenance(*, derived_bytes: bytes, derived_sha256: str,
         "status": "VERIFIED_DERIVATION_CHAIN" if original_recovered
         else "VERIFIED_DERIVATION_CHAIN_ORIGINAL_HASH_RECORDED_ORIGINAL_BYTES_UNAVAILABLE",
     }
+
+
+def pending_approval_record(*, amendment_id: str, source_id: str,
+                            source_sha256: str, selection_seed: int) -> dict[str, Any]:
+    """Create an unsigned decision record; never infer scientific approval."""
+    if not amendment_id or not source_id or len(source_sha256) != 64 or selection_seed < 0:
+        raise ValueError("invalid pending approval identity")
+    return {
+        "amendment_id": amendment_id,
+        "amendment_version": 1,
+        "source_id": source_id,
+        "source_sha256": source_sha256,
+        "selection_algorithm": "SHA256_RANK_V1",
+        "selection_seed": selection_seed,
+        "approval_decision": "PENDING",
+        "approval_authority": None,
+        "approval_timestamp": None,
+        "approval_evidence": None,
+        "source_approved": False,
+        "provenance_risk_accepted": False,
+        "seed_approved": False,
+        "registry_approved": False,
+        "final_registry_created": False,
+    }
+
+
+def validate_approval_record(record: Mapping[str, Any]) -> None:
+    """Reject fake or incomplete approvals while permitting an unsigned draft."""
+    decision = record.get("approval_decision")
+    if decision == "PENDING":
+        if any(record.get(field) is not None for field in
+               ("approval_authority", "approval_timestamp", "approval_evidence")):
+            raise ValueError("pending approval cannot carry approval metadata")
+        if any(record.get(field) is True for field in
+               ("source_approved", "provenance_risk_accepted", "seed_approved",
+                "registry_approved", "final_registry_created")):
+            raise ValueError("pending approval cannot approve scientific decisions")
+        return
+    if decision not in ("APPROVED", "REJECTED"):
+        raise ValueError("unknown approval decision")
+    if not record.get("approval_authority"):
+        raise ValueError("approval authority required")
+    if not record.get("approval_timestamp"):
+        raise ValueError("approval timestamp required")
+    if not record.get("approval_evidence"):
+        raise ValueError("approval evidence required")

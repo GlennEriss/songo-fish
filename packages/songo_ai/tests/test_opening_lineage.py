@@ -73,3 +73,28 @@ def test_forensic_module_has_no_execution_or_registry_api():
     import songo_ai.evaluation.opening_lineage as module
     forbidden=("registry_payload","SongoLegacyGame","mcts","checkpoint","train")
     assert all(not hasattr(module,name) for name in forbidden)
+
+
+def test_pending_approval_is_fail_closed():
+    record=pending_approval_record(amendment_id="LOT46B_STAGE_C0_OPENING_PROTOCOL_AMENDMENT_V1",
+        source_id="LOT45_D_REAL_HUMAN_SUBSET",source_sha256="a"*64,selection_seed=3538971373371044805)
+    validate_approval_record(record)
+    assert record["approval_decision"]=="PENDING"
+    assert not any(record[k] for k in ("source_approved","provenance_risk_accepted","seed_approved","registry_approved","final_registry_created"))
+
+
+@pytest.mark.parametrize("missing",["approval_authority","approval_timestamp","approval_evidence"])
+def test_non_pending_decision_requires_complete_authorization(missing):
+    record=pending_approval_record(amendment_id="a",source_id="s",source_sha256="a"*64,selection_seed=1)
+    record.update(approval_decision="APPROVED",approval_authority="authority",
+                  approval_timestamp="2026-10-20T00:00:00Z",approval_evidence="signed-record")
+    record[missing]=None
+    with pytest.raises(ValueError,match=missing.replace("_"," ")):
+        validate_approval_record(record)
+
+
+def test_pending_record_rejects_silent_source_or_seed_approval():
+    record=pending_approval_record(amendment_id="a",source_id="s",source_sha256="a"*64,selection_seed=1)
+    record["seed_approved"]=True
+    with pytest.raises(ValueError,match="cannot approve"):
+        validate_approval_record(record)
