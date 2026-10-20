@@ -11,3 +11,5 @@ Le registre final contient zéro doublon, zéro recouvrement exact d'entraîneme
 Tous les artefacts gelés sont écrits atomiquement; une tentative d'écrasement divergent échoue. C0 historique, moteur, checkpoints et protocole statistique restent inchangés.
 
 Tests : `54 passed in 3.53s` pour P6 et les régressions d'arène; `820 passed in 194.78s` pour la suite complète.
+
+Publication Drive : `PASS` sous `/content/drive/MyDrive/songo-ai/experiments/lot46b_stage_c0_4_p6`; les 14 fichiers initiaux ont été comparés octet par octet au commit de construction.

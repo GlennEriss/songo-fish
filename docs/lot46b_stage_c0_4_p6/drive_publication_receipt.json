@@ -1,0 +1,11 @@
+{
+  "DRIVE_PUBLICATION": "PASS",
+  "path": "/content/drive/MyDrive/songo-ai/experiments/lot46b_stage_c0_4_p6",
+  "construction_commit": "ea0ae1c18ba1f57164d57797334f8162330a20ca",
+  "initial_file_count": 14,
+  "byte_for_byte_equality": true,
+  "registry_sha256": "73cf111f5b8837075916c592c7f5c8cb973740becee674f94c84c240ebebf68e",
+  "historical_p2_p3_p4_p5_overwritten": false,
+  "games_executed": 0,
+  "mcts_executed": 0
+}
