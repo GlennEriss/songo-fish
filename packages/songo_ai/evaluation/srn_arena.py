@@ -351,12 +351,19 @@ def play_arena_game(
     agent_b_name: str,
     a_player: int,
     config: ArenaConfig,
+    validate_prefix: bool = True,
 ) -> ArenaGameResult:
     if a_player not in (PLAYER_ONE, PLAYER_TWO):
         raise ValueError("a_player must be PLAYER_ONE or PLAYER_TWO")
     if {p1_agent.name, p2_agent.name} != {agent_a_name, agent_b_name}:
         raise ValueError("physical agents do not match agent A/B names")
-    validate_opening(opening)
+    if validate_prefix:
+        validate_opening(opening)
+    else:
+        game_check = SongoLegacyGame.from_state(opening.state.to_engine_state())
+        game_check.normalize_terminal()
+        if game_check.finished or not game_check.legal_local_actions():
+            raise ValueError(f"frozen opening {opening.opening_id} is terminal or illegal")
     game = SongoLegacyGame.from_state(opening.state.to_engine_state())
     repetitions = Counter({(tuple(game.board), game.turn): 1})
     actions: list[int] = []

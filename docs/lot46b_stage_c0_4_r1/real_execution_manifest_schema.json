@@ -1,0 +1,5 @@
+{
+  "schema": 1,
+  "required": ["experiment_id", "experiment_manifest_sha256", "registry_sha256", "opening_id", "model_a", "model_b", "mcts_simulations_per_decision", "total_scheduled_games", "side_assignment_schedule", "checkpoint_identities", "authorization_scope", "scientific_protocol_version", "approved"],
+  "constants": {"experiment_id": "LOT46B_STAGE_C0_4_SMOKE", "opening_id": "LOT46B-C0-OPENING-0001", "mcts_simulations_per_decision": 512, "total_scheduled_games": 2}
+}
