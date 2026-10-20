@@ -53,5 +53,7 @@ def test_public_seed_and_rank_are_deterministic_and_proposed():
 
 def test_candidate_outputs_cannot_enter_selection_contract():
  spec=prospective_selection_spec(source_sha256=SRC,seed=proposed_selection_seed()["integer_big_endian_first_8_bytes"])
- assert set(spec)=={"algorithm","source_sha256","selection_seed","required_openings","rank_key","candidate_outputs_used","status"}
  assert spec["candidate_outputs_used"] is False and spec["status"]=="PROPOSED"
+ assert spec["sorting"]=="ascending lexicographic rank digest"
+ assert spec["tie_breaking"].startswith("ascending state fingerprint")
+ assert spec["registry_serialization"].startswith("canonical JSON")

@@ -69,6 +69,29 @@ def test_source_hash_and_provenance_classification():
     with pytest.raises(ValueError): classify_provenance(derived_bytes=data,derived_sha256="0"*64,original_sha256=None,original_bytes=None)
 
 
+def test_original_source_bytes_are_verified_when_available():
+    derived=b"derived"; original=b"original"
+    report=classify_provenance(derived_bytes=derived,derived_sha256=sha256(derived),
+        original_sha256=sha256(original),original_bytes=original)
+    assert report["original_bytes_recovered"] is True
+    assert report["status"]=="VERIFIED_DERIVATION_CHAIN"
+
+
+def test_incorrect_original_source_sha_is_rejected():
+    with pytest.raises(ValueError,match="source SHA256 mismatch"):
+        classify_provenance(derived_bytes=b"derived",derived_sha256=sha256(b"derived"),
+            original_sha256="0"*64,original_bytes=b"original")
+
+
+def test_b3_evidence_summary_requires_complete_exact_mapping_for_clearance():
+    complete=join_historical_identifiers([{"id":"a"}],[{"id":"a","state":state()}],
+        record_field="id",source_field="id",record_namespace="b3",source_namespace="b3")
+    assert lineage_summary(complete)["validation_leakage_status"]=="CLEAR"
+    incomplete=join_historical_identifiers([{"id":"a"},{"id":"b"}],[{"id":"a","state":state()}],
+        record_field="id",source_field="id",record_namespace="b3",source_namespace="b3")
+    assert lineage_summary(incomplete)["validation_leakage_status"]!="CLEAR"
+
+
 def test_forensic_module_has_no_execution_or_registry_api():
     import songo_ai.evaluation.opening_lineage as module
     forbidden=("registry_payload","SongoLegacyGame","mcts","checkpoint","train")

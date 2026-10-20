@@ -132,5 +132,16 @@ def prospective_selection_spec(*, source_sha256: str, seed: int, count: int = 40
         raise ValueError("invalid frozen selection specification")
     return {"algorithm": "SHA256_RANK_V1", "source_sha256": source_sha256,
             "selection_seed": seed, "required_openings": count,
-            "rank_key": "sha256(seed || physical_state_fingerprint || source_record_id)",
+            "seed_encoding": "unsigned base-10 ASCII, no leading zero",
+            "state_fingerprint_encoding": "lowercase 64-character hexadecimal ASCII",
+            "source_record_id_encoding": "UTF-8, exact source value",
+            "rank_preimage": "seed_ascii || state_fingerprint_ascii || source_record_id_utf8",
+            "rank_digest": "SHA-256 lowercase hexadecimal",
+            "sorting": "ascending lexicographic rank digest",
+            "tie_breaking": "ascending state fingerprint, then source_record_id UTF-8 bytes",
+            "eligibility": ["complete physical state", "non-terminal", "has legal action",
+                            "unique physical-state fingerprint", "not in frozen training exclusions",
+                            "not in frozen validation exclusions"],
+            "registry_serialization": "canonical JSON: sorted keys, compact separators, ASCII, no NaN",
+            "registry_sha256": "SHA-256 of registry_serialization UTF-8 bytes",
             "candidate_outputs_used": False, "status": "PROPOSED"}

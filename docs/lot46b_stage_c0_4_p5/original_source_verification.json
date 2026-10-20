@@ -1,0 +1,13 @@
+{
+  "source_path": "data/real_matches/match_moves_v1.jsonl",
+  "git_tracked": true,
+  "git_blob": "511587806fb939ba0a8380ee6bf09b0315a85bca",
+  "size_bytes": 586283,
+  "historical_sha256": "17d9ad19921cdbf1591eb54f6c40aa5b710376f6e903491dd39affc605a5ed18",
+  "fresh_sha256": "17d9ad19921cdbf1591eb54f6c40aa5b710376f6e903491dd39affc605a5ed18",
+  "ORIGINAL_BYTES_RECOVERED": "YES",
+  "ORIGINAL_SHA256_VERIFIED_AGAINST_BYTES": "YES",
+  "HISTORICAL_SHA256_RECORD_VERIFIED": "YES",
+  "ORIGINAL_SOURCE_INTEGRITY": "PASS",
+  "limitation": "Byte identity does not independently attest the external human-play origin."
+}

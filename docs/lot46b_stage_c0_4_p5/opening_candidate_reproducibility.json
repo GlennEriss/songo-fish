@@ -1,0 +1,18 @@
+{
+  "source_id": "LOT45_D_REAL_HUMAN_SUBSET",
+  "container_outer_sha256": "75ea7844cc942932918c52d7b8ff891fe8c8810e35caa22a18cbd61630254af9",
+  "compressed_member_sha256": "49eb0f83265a763d06f7b45032d994227208f4149ad0c9fb67b6209fd8289667",
+  "decompressed_jsonl_sha256": "596ec818c5d1ef9e4f862e82f5793dea3ca489323a968208f9e4ccfaaf375a54",
+  "source_records": 491,
+  "unique_physical_states": 491,
+  "training_overlaps_excluded": 51,
+  "b3_total_records": 994,
+  "b3_exactly_mapped_records": 994,
+  "b3_unique_physical_states": 994,
+  "b3_exact_overlap_count": 0,
+  "provisionally_eligible_openings": 440,
+  "required_openings": 400,
+  "candidate_set_reproducible": true,
+  "final_selection_executed": false,
+  "final_registry_created": false
+}
