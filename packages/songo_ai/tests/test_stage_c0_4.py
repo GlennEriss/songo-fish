@@ -97,3 +97,19 @@ def test_checkpoint_validation_and_performance_fields(tmp_path):
     assert validate_checkpoint(tmp_path/"missing","a"*64)["status"]=="NOT_VERIFIED"
     with pytest.raises(ValueError):validate_checkpoint(p,"0"*64)
     assert set(performance_schema())=={"MODEL_LOAD_TIME_SECONDS","DEVICE_INITIALIZATION_SECONDS","INFERENCE_TIME_SECONDS","MCTS_SEARCH_TIME_SECONDS","MCTS_SIMULATIONS_COMPLETED","MCTS_SIMULATIONS_PER_SECOND","AVERAGE_MOVE_TIME_SECONDS","GAME_DURATION_SECONDS","SQLITE_COMMIT_TIME_SECONDS","DRIVE_SNAPSHOT_TIME_SECONDS","PEAK_MEMORY_USAGE","DEVICE_TYPE"}
+
+
+def test_strict_dry_run_import_firewall():
+    from pathlib import Path
+    source=Path("apps/trainer/scripts/prepare_lot46b_stage_c0_4.py").read_text()
+    assert "songo_ai.search" not in source and "SongoMCTS" not in source
+    assert "songo_ai.songo" not in source and "game_executor" not in source
+    assert 'action="store_true",required=True' in source and 'a.max_games!=2' in source
+
+
+def test_colab_validator_remains_synthetic_and_separate():
+    from pathlib import Path
+    source=Path("apps/trainer/scripts/validate_lot46b_stage_c0_4_colab.py").read_text()
+    assert "SongoMCTS" not in source and "game_executor" not in source
+    assert '"--dry-run","--max-games","2"' in source
+    assert 'REAL_GAMES_EXECUTED":0' in source and 'MCTS_SEARCH":"NOT_RUN"' in source

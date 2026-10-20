@@ -1,14 +1,12 @@
 # Colab preexecution guide
 
-Monter Drive, cloner le commit rapporté, installer le projet sans remplacer PyTorch CUDA, puis exécuter uniquement :
+Monter Drive, cloner `dev`, vérifier que `HEAD` descend de `433e1e462d430768fdd9592ee61a3e0b82111b3b`, puis installer le projet avec `pip install -e '.[train,dev]'` sans réinstaller PyTorch. Exécuter ensuite uniquement :
 
 ```bash
-python apps/trainer/scripts/prepare_lot46b_stage_c0_4.py \
+python apps/trainer/scripts/validate_lot46b_stage_c0_4_colab.py \
   --repo /content/songo-fish \
-  --output /content/drive/MyDrive/songo-ai/experiments/lot46b_stage_c0_4_preexecution \
-  --registry-path /content/songo-fish/docs/lot46b_stage_c0_4_p6/opening_registry_400.json \
-  --unconstrained-checkpoint /content/drive/MyDrive/songo-ai/experiments/lot46b_b2/LOT46B_B2_STAGE_B_DEEP_UNCONSTRAINED_001/durable_checkpoints/checkpoint-00005000.pt \
-  --device auto --dry-run --max-games 2
+  --drive-root /content/drive/MyDrive/songo-ai \
+  --device auto
 ```
 
-Le flag `--dry-run` est obligatoire. Ce programme n’importe aucun exécuteur de jeu et ne peut lancer ni partie ni MCTS. Vérifier les SHA publiés après copie Drive; ne jamais écraser P6.
+Le validateur découvre le checkpoint exclusivement par son chemin historique et son SHA256, puis appelle lui-même l’entry point strict avec `--dry-run --max-games 2`. L’inférence synthétique est un chemin distinct. Chaque exécution publie dans un répertoire `attempt-<UTC>-<commit>` inédit et relit l’inventaire SHA256 depuis Drive. Aucun exécuteur de jeu ni MCTS n’est importé par le dry-run.
