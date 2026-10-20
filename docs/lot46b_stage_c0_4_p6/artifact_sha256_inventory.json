@@ -1,0 +1,9 @@
+{
+  "approved_amendment_reference.json": "53712ebb50f01a5d5cd8a4ea39c885711c2ecfb5b7700f227e68cbbd67bf5c45",
+  "opening_candidate_inventory.json": "4ad494ded18fa55d9c238bb0fee4b08a896759bbc55f486104e91504c519ac3e",
+  "opening_registry_400.json": "73cf111f5b8837075916c592c7f5c8cb973740becee674f94c84c240ebebf68e",
+  "opening_registry_manifest.json": "d41efc0eda8612e168b020a86778cad4017a33cc1e8de26f59110896b74ef7d6",
+  "opening_registry_sha256.txt": "c74f14b40332a1f562473c92c8e0031ba232cfdc6ab27c638236ba6f0ca4b006",
+  "opening_selection_audit.json": "a96a3c490f51d6b5072d3935949d34cf2f2131679da5dde5b0cce093e9248fff",
+  "scientific_approval_record.json": "8205775247ce14b72d4c30f081bed0bf3243a03c7271d131b8b87e3271b8264e"
+}

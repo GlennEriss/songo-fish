@@ -1,0 +1,17 @@
+{
+  "ARENA_COMPATIBILITY": "PASS",
+  "opening_id_parsing": "PASS",
+  "raw_songo_state_deserialization": "PASS",
+  "state_fingerprint_verification": "PASS",
+  "immutable_manifest_reference": "PASS",
+  "paired_game_scheduling": "PASS",
+  "side_assignment_reversal": "PASS",
+  "resume_identity_consistency": "PASS",
+  "registry_hash_binding": "PASS",
+  "comparisons": 6,
+  "shared_openings": 400,
+  "scheduled_synthetic_records": 4800,
+  "real_games_executed": 0,
+  "mcts_searches_executed": 0,
+  "note": "Side reversal swaps candidate assignments while preserving the exact physical opening state."
+}

@@ -1,0 +1,7 @@
+{
+  "amendment_path": "docs/lot46b_stage_c0_4_p5/opening_protocol_amendment_v1.json",
+  "expected_sha256": "2e4dae3b58beeee4f15b17c72cf2c000729f3ae49e44147cc0a2601b29788662",
+  "observed_sha256": "2e4dae3b58beeee4f15b17c72cf2c000729f3ae49e44147cc0a2601b29788662",
+  "APPROVAL_INTEGRITY": "PASS",
+  "approved_bytes_modified": false
+}

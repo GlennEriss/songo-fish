@@ -1,0 +1,12 @@
+{
+  "selected_openings": 400,
+  "TRAINING_EXACT_OVERLAPS": 0,
+  "B3_EXACT_OVERLAPS": 0,
+  "DUPLICATE_PHYSICAL_STATES": 0,
+  "training_exclusions_reproduced": 51,
+  "b3_lineage_evidence": "docs/lot46b_stage_c0_4_p3/b3_physical_mapping_report.json",
+  "b3_total_records": 994,
+  "b3_exactly_mapped_records": 994,
+  "b3_physical_coverage_percent": 100.0,
+  "limitation": "Exact non-overlap does not establish complete statistical independence or external human-game authenticity."
+}

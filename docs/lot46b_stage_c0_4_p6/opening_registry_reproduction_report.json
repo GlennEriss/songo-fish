@@ -1,0 +1,13 @@
+{
+  "construction_runs": 2,
+  "separate_temporary_directories": true,
+  "candidate_inventory_byte_equal": true,
+  "selected_opening_list_byte_equal": true,
+  "opening_ids_byte_equal": true,
+  "canonical_states_byte_equal": true,
+  "registry_byte_equal": true,
+  "REPRODUCTION_1_SHA256": "73cf111f5b8837075916c592c7f5c8cb973740becee674f94c84c240ebebf68e",
+  "REPRODUCTION_2_SHA256": "73cf111f5b8837075916c592c7f5c8cb973740becee674f94c84c240ebebf68e",
+  "candidate_inventory_sha256": "4ad494ded18fa55d9c238bb0fee4b08a896759bbc55f486104e91504c519ac3e",
+  "DETERMINISTIC_REPRODUCTION": "PASS"
+}
