@@ -48,7 +48,8 @@ def restore_g4_inputs(repo:Path,drive:Path)->dict:
                 source=bundle.extractfile(member)
                 if source is None:raise RuntimeError(f"unreadable input member: {name}")
                 tmp=target.with_name(f".{target.name}.tmp-{os.getpid()}")
-                with source,tmp.open("wb") as stream,out:shutil.copyfileobj(stream,out)
+                with source, tmp.open("wb") as output:
+                    shutil.copyfileobj(source, output)
                 if file_sha256(tmp)!=digest:tmp.unlink();raise RuntimeError(f"input member digest mismatch: {name}")
                 os.replace(tmp,target)
     return {"archive":str(archive),"archive_sha256":LOT46_INPUTS_SHA,"restored":wanted}
