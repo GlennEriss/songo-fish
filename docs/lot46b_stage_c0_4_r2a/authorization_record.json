@@ -1,0 +1,21 @@
+{
+  "approved": true,
+  "authorization_scope": "EXACTLY_TWO_REAL_GAMES_MCTS512_ONE_FROZEN_OPENING",
+  "checkpoint_identities": {
+    "DEEP_POLICY_UNCONSTRAINED": "83d8256ce1b01a794f1a5f0f3b5cde7a4c4d05a178cb031941455811366ce5d7",
+    "POOL_G4R_POLICY": "fbf379dfdc34775cd6109bf6520d2694d2e94ede97ee594250ff01c40e01b05f",
+    "POOL_G4R_VALUE": "9bb4ee187d62998d93d5d578c84071ee6925977338a934a969c99dfc9813cc79"
+  },
+  "experiment_id": "LOT46B_STAGE_C0_4_SMOKE",
+  "experiment_manifest_sha256": "877c4f4a5a241a3bd1a382808ae06938bdf6633fce2fbac9e8211268ee064281",
+  "mcts_simulations_per_decision": 512,
+  "model_a": "POOL_G4R",
+  "model_b": "DEEP_POLICY_UNCONSTRAINED",
+  "opening_id": "LOT46B-C0-OPENING-0001",
+  "registry_sha256": "73cf111f5b8837075916c592c7f5c8cb973740becee674f94c84c240ebebf68e",
+  "schema": 1,
+  "scientific_amendment_sha256": "2e4dae3b58beeee4f15b17c72cf2c000729f3ae49e44147cc0a2601b29788662",
+  "scientific_protocol_version": "lot46b-c0.4-smoke-v1",
+  "side_assignment_schedule": [["POOL_G4R", "DEEP_POLICY_UNCONSTRAINED"], ["DEEP_POLICY_UNCONSTRAINED", "POOL_G4R"]],
+  "total_scheduled_games": 2
+}

@@ -19,6 +19,7 @@ from .stage_c0_4 import EXPERIMENT_ID, MCTS_SIMULATIONS, OPENING_ID, REAL_AUTHOR
 PROTOCOL = "lot46b-c0.4-smoke-v1"
 MODEL_A, MODEL_B = "POOL_G4R", "DEEP_POLICY_UNCONSTRAINED"
 AUTHORIZATION_SCHEMA = 1
+SCIENTIFIC_AMENDMENT_SHA256 = "2e4dae3b58beeee4f15b17c72cf2c000729f3ae49e44147cc0a2601b29788662"
 
 class RunState(str, Enum):
     CREATED="CREATED"; PREFLIGHT_VALIDATED="PREFLIGHT_VALIDATED"; AUTHORIZED="AUTHORIZED"
@@ -51,7 +52,8 @@ def schedule_contract(manifest:ExperimentManifest)->dict:
 def authorization_binding(manifest:ExperimentManifest,checkpoint_identities:Mapping[str,str])->dict:
     contract=schedule_contract(manifest)
     return {"schema":AUTHORIZATION_SCHEMA,"experiment_id":EXPERIMENT_ID,"experiment_manifest_sha256":manifest.fingerprint,
-        "registry_sha256":REGISTRY_SHA256,"opening_id":OPENING_ID,"model_a":MODEL_A,"model_b":MODEL_B,
+        "registry_sha256":REGISTRY_SHA256,"scientific_amendment_sha256":SCIENTIFIC_AMENDMENT_SHA256,
+        "opening_id":OPENING_ID,"model_a":MODEL_A,"model_b":MODEL_B,
         "mcts_simulations_per_decision":MCTS_SIMULATIONS,"total_scheduled_games":2,
         "side_assignment_schedule":contract["side_assignment_schedule"],"checkpoint_identities":dict(checkpoint_identities),
         "authorization_scope":REAL_AUTHORIZATION_SCOPE,"scientific_protocol_version":PROTOCOL,"approved":True}
@@ -59,8 +61,23 @@ def authorization_binding(manifest:ExperimentManifest,checkpoint_identities:Mapp
 def validate_authorization(path:Path,manifest:ExperimentManifest,checkpoint_identities:Mapping[str,str])->dict:
     if not path.is_file(): raise PermissionError("authorization record missing")
     actual=json.loads(path.read_text()); expected=authorization_binding(manifest,checkpoint_identities)
+    if actual.get("fixture_only") is True: raise PermissionError("synthetic authorization fixture forbidden in production")
     if actual!=expected: raise PermissionError("authorization record is not exactly bound to immutable manifest")
     return actual
+
+def validate_preflight(*,manifest:ExperimentManifest,registry:Path,amendment:Path,
+    checkpoints:Mapping[str,tuple[Path,str]],authorization_file:Path,
+    ownership:OwnershipConfirmation|None=None)->dict:
+    contract=schedule_contract(manifest)
+    if file_sha256(registry)!=REGISTRY_SHA256: raise ValueError("registry SHA256 mismatch")
+    if file_sha256(amendment)!=SCIENTIFIC_AMENDMENT_SHA256: raise ValueError("scientific amendment SHA256 mismatch")
+    identities={}
+    for name,(path,digest) in checkpoints.items():
+        if not path.is_file() or file_sha256(path)!=digest: raise ValueError(f"checkpoint integrity failure: {name}")
+        identities[name]=digest
+    authorization=validate_authorization(authorization_file,manifest,identities)
+    if ownership is not None: validate_ownership(ownership)
+    return {"status":"PASS","contract":contract,"checkpoint_identities":identities,"authorization":authorization}
 
 @dataclass(frozen=True)
 class OwnershipConfirmation:
@@ -134,3 +151,14 @@ def execute_pending(*,manifest:ExperimentManifest,store:ArenaStore,authorization
         except BaseException as exc:
             journal.interrupt(attempt,f"{type(exc).__name__}: {exc}"); raise
     return {"completed":len(list(store.db.execute('SELECT 1 FROM results'))),"pending":len(store.pending()),"attempt_history":journal.history()}
+
+def production_control_flow(*,preflight:Callable[[],dict],manifest:ExperimentManifest,store:ArenaStore,
+    authorization_file:Path,checkpoint_identities:Mapping[str,str],ownership:OwnershipConfirmation,
+    device_selector:Callable[[],str],executor_factory:Callable[[str],Callable[[ScheduledGame,str],GameResult]],
+    snapshot_directory:Path)->dict:
+    """One control flow for production and injected R2A synthetic validation."""
+    evidence=preflight(); device=device_selector(); executor=executor_factory(device)
+    outcome=execute_pending(manifest=manifest,store=store,authorization_file=authorization_file,
+        checkpoint_identities=checkpoint_identities,ownership=ownership,device=device,
+        executor=executor,snapshot_directory=snapshot_directory,max_games=2)
+    return {"preflight":evidence,"selected_device":device,**outcome}

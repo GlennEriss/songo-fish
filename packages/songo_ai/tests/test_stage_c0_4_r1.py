@@ -41,6 +41,10 @@ def test_missing_authorization_fails(tmp_path):
 def test_exact_authorization_passes(tmp_path):
     m,ids=fixture(tmp_path);assert validate_authorization(auth(tmp_path,m,ids),m,ids)["approved"]
 
+def test_production_rejects_synthetic_fixture(tmp_path):
+    m,ids=fixture(tmp_path);p=auth(tmp_path,m,ids,lambda x:x.__setitem__("fixture_only",True))
+    with pytest.raises(PermissionError,match="fixture"):validate_authorization(p,m,ids)
+
 def test_fail_closed_ownership():
     with pytest.raises(PermissionError):validate_ownership(OwnershipConfirmation(EXPERIMENT_ID,"",False))
     validate_ownership(OwnershipConfirmation(EXPERIMENT_ID,"operator-session",True))
@@ -68,6 +72,17 @@ def test_synthetic_execution_pair_and_snapshots(tmp_path):
     m,ids=fixture(tmp_path);store=ArenaStore(tmp_path/"a.sqlite");store.initialize(m,schedule(m))
     out=execute_pending(manifest=m,store=store,authorization_file=auth(tmp_path,m,ids),checkpoint_identities=ids,ownership=OwnershipConfirmation(EXPERIMENT_ID,"one",True),device="cpu",executor=lambda g,d:result(g),snapshot_directory=tmp_path/"snap")
     assert out["completed"]==2 and out["pending"]==0 and len(out["attempt_history"])==2
+
+def test_production_control_flow_synthetic_end_to_end(tmp_path):
+    m,ids=fixture(tmp_path);store=ArenaStore(tmp_path/"prod.sqlite");store.initialize(m,schedule(m));seen=[]
+    def factory(device):
+        def execute(g,d):seen.append((g.candidate_p1,g.candidate_p2,d));return result(g)
+        return execute
+    evidence={"status":"PASS","synthetic":True}
+    out=production_control_flow(preflight=lambda:evidence,manifest=m,store=store,authorization_file=auth(tmp_path,m,ids),checkpoint_identities=ids,ownership=OwnershipConfirmation(EXPERIMENT_ID,"synthetic-test",True),device_selector=lambda:"cpu",executor_factory=factory,snapshot_directory=tmp_path/"snap-prod")
+    assert out["preflight"]==evidence and out["completed"]==2 and out["pending"]==0
+    assert seen==[(MODEL_A,MODEL_B,"cpu"),(MODEL_B,MODEL_A,"cpu")]
+    assert verify_resume(store,m)==()
 
 def test_snapshot_corruption_rejected(tmp_path):
     m,_=fixture(tmp_path);store=ArenaStore(tmp_path/"a.sqlite");store.initialize(m,schedule(m));mgr=SQLiteSnapshotManager(tmp_path/"snap",m.fingerprint);info=mgr.publish(store,0);Path(info["path"]).write_bytes(b"broken")
@@ -103,6 +118,9 @@ def test_old_dry_run_firewall_unchanged():
     source=Path("apps/trainer/scripts/prepare_lot46b_stage_c0_4.py").read_text();assert 'action="store_true",required=True' in source
     assert "songo_ai.search" not in source and "songo_ai.songo" not in source
 
-def test_no_r1_real_execution_tokens():
-    source=Path("apps/trainer/scripts/run_lot46b_stage_c0_4_real.py").read_text();assert "R1 controlled stop" in source
-    assert "play_arena_game" not in source and "SongoMCTS" not in source
+def test_real_runner_safe_default_and_lazy_adapters():
+    source=Path("apps/trainer/scripts/run_lot46b_stage_c0_4_real.py").read_text()
+    assert '"status":"SAFE_PREFLIGHT_ONLY"' in source
+    assert "if not a.execute:" in source and "--single-runner-confirmed" in source
+    before_factory=source.split("def real_executor_factory",1)[0]
+    assert "songo_ai.songo" not in before_factory and "songo_ai.search" not in before_factory
